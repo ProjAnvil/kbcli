@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/projanvil/kbcli/internal/config"
-	"github.com/projanvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
 type retriever struct {

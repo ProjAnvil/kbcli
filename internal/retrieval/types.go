@@ -6,8 +6,8 @@ package retrieval
 import (
 	"context"
 
-	"github.com/projanvil/kbcli/internal/config"
-	"github.com/projanvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
 // CompleteFunc is one LLM completion. A nil CompleteFunc disables every

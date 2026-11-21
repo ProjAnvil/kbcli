@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/projanvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/config"
 )
 
 // overridableKeys lists every field a workspace may override.

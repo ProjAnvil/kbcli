@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/projanvil/kbcli/internal/i18n"
+	"github.com/ProjAnvil/kbcli/internal/i18n"
 )
 
 func opts(dir string) Options {

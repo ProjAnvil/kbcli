@@ -1,4 +1,4 @@
-module github.com/projanvil/kbcli
+module github.com/ProjAnvil/kbcli
 
 go 1.27.4
 

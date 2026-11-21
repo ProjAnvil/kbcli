@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/projanvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
 const (

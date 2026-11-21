@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/projanvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/config"
 )
 
 // prepareHome points $HOME at a fresh temp dir and returns the expected

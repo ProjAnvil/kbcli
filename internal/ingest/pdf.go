@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	pdf "github.com/ledongthuc/pdf"
-	"github.com/projanvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
 // chunkPDF extracts row-ordered text and splits PER PAGE so every chunk can

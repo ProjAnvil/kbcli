@@ -10,8 +10,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/projanvil/kbcli/internal/config"
-	"github.com/projanvil/kbcli/internal/i18n"
+	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/i18n"
 )
 
 // settingsHelpLine is the footer shown on the settings screen.
@@ -107,7 +107,7 @@ func (m *model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveCursorInGroup(-1)
 	case "down", "j":
 		m.moveCursorInGroup(1)
-	// left/right stay the numeric nudge. 25 of 40 fields are numeric, so
+	// left/right stay the numeric nudge. 21 of the 39 fields are numeric, so
 	// spending these keys on pane navigation would break the common action.
 	case "left", "h":
 		m.adjustField(-1)

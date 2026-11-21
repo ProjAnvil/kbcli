@@ -1,7 +1,7 @@
 // Package index defines the on-disk vector index and its retrieval contract.
 package index
 
-import "github.com/projanvil/kbcli/internal/embed"
+import "github.com/ProjAnvil/kbcli/internal/embed"
 
 const (
 	// FileMagic guards the first bytes of a kbcli vector file.

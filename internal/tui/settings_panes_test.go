@@ -6,8 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/projanvil/kbcli/internal/config"
-	"github.com/projanvil/kbcli/internal/i18n"
+	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/i18n"
 )
 
 func TestRailToDetailAndBack(t *testing.T) {

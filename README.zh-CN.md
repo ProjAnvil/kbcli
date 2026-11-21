@@ -53,6 +53,20 @@ make install    # go install ./cmd/kbcli
 
 无 CGO、无 Python、无服务端。产物是单一二进制文件。
 
+### 远程安装
+
+使用 `go install` 直接安装已发布的版本：
+
+```sh
+go install github.com/ProjAnvil/kbcli/cmd/kbcli@v0.1.1
+# 或
+go install github.com/ProjAnvil/kbcli/cmd/kbcli@latest
+```
+
+请使用 `go install`，而不是 `go get`：自 Go 1.17 起，`go get` 只修改 `go.mod`，不会安装二进制文件。二进制文件位于 `$(go env GOPATH)/bin/kbcli`；可设置 `GOBIN` 来覆盖该位置。该目录必须在你的 `PATH` 中。
+
+模块路径使用组织名称的大小写形式 `ProjAnvil`。Go 模块路径区分大小写，因此请严格按上面所写使用 `github.com/ProjAnvil/kbcli`。
+
 ## 快速开始
 
 ```sh

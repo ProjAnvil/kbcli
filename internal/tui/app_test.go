@@ -7,8 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/projanvil/kbcli/internal/agent"
-	"github.com/projanvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/agent"
+	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
 // stubAnswerer is a controllable agent.Answerer used by the Update tests.

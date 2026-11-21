@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/projanvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
 const maxDOCXUncompressed = 100 << 20 // 100MB decompression budget

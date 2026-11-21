@@ -3,7 +3,7 @@ package agent
 import (
 	"sync"
 
-	"github.com/projanvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
 // sink is a mutex-protected, defensive-copy evidence store. It keeps the

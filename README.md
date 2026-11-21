@@ -53,6 +53,20 @@ make install    # go install ./cmd/kbcli
 
 No CGO, no Python, no server: the result is a single binary.
 
+### Remote install
+
+Install a released version directly with `go install`:
+
+```sh
+go install github.com/ProjAnvil/kbcli/cmd/kbcli@v0.1.1
+# or
+go install github.com/ProjAnvil/kbcli/cmd/kbcli@latest
+```
+
+Use `go install`, not `go get`: since Go 1.17, `go get` only edits `go.mod` and does not install a binary. The binary lands in `$(go env GOPATH)/bin/kbcli`; set `GOBIN` to override that location. That directory must be on your `PATH`.
+
+The module path uses the organisation casing `ProjAnvil`. Go module paths are case-sensitive, so use `github.com/ProjAnvil/kbcli` exactly as written above.
+
 ## Quickstart
 
 ```sh

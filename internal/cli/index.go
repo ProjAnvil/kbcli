@@ -8,9 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/projanvil/kbcli/internal/app"
-	"github.com/projanvil/kbcli/internal/config"
-	"github.com/projanvil/kbcli/internal/scan"
+	"github.com/ProjAnvil/kbcli/internal/app"
+	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/scan"
 )
 
 // newIndexCmd builds "kbcli index [dir]".

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/projanvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/index"
 	"github.com/projanvil/langchain-golang/core/documents"
 	"github.com/projanvil/langchain-golang/textsplitters"
 )

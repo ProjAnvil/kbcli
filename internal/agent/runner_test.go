@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/projanvil/kbcli/internal/i18n"
-	"github.com/projanvil/kbcli/internal/retrieval"
+	"github.com/ProjAnvil/kbcli/internal/i18n"
+	"github.com/ProjAnvil/kbcli/internal/retrieval"
 	"github.com/projanvil/langchain-golang/core/messages"
 )
 

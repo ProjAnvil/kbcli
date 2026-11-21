@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/projanvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
 // writeFile creates a fixture at runtime in dir (including parent dirs) and

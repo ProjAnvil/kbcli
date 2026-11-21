@@ -5,7 +5,7 @@
 // dependency-free ZIP/XML DOCX reader that emits Markdown.
 package ingest
 
-import "github.com/projanvil/kbcli/internal/index"
+import "github.com/ProjAnvil/kbcli/internal/index"
 
 // Options controls directory walking and chunk sizes.
 type Options struct {

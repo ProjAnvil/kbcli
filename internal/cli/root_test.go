@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/projanvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/config"
 )
 
 // runCmd builds a fresh root command for each invocation so no cobra state

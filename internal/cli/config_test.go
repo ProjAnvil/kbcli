@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/projanvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/config"
 )
 
 func TestConfigSetGetListPath(t *testing.T) {

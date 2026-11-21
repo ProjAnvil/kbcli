@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/projanvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
 // isCJK reports whether r is in the CJK unified ideograph block. Porto's

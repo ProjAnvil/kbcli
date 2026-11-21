@@ -6,8 +6,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/projanvil/kbcli/internal/config"
-	"github.com/projanvil/kbcli/internal/i18n"
+	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/i18n"
 )
 
 // zhAnaphora and enAnaphora are the pronoun/ellipsis markers Porto's condense

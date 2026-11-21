@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/projanvil/kbcli/internal/app"
-	"github.com/projanvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/app"
+	"github.com/ProjAnvil/kbcli/internal/config"
 )
 
 // errNoIndex is returned by commands that need an existing vector file.

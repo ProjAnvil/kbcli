@@ -9,7 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/projanvil/kbcli/internal/embed"
+	"github.com/ProjAnvil/kbcli/internal/embed"
 )
 
 // tmpSeq makes each atomic-write temp file unique across concurrent saves.

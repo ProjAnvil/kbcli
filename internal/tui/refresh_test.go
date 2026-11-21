@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/projanvil/kbcli/internal/agent"
-	"github.com/projanvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/agent"
+	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
 // A reindex or update command replaces the index object inside app.App. The

@@ -7,7 +7,7 @@
 // inherits global and applies a sparse set of per-field overrides.
 package settings
 
-import "github.com/projanvil/kbcli/internal/config"
+import "github.com/ProjAnvil/kbcli/internal/config"
 
 const (
 	// Version is the current settings.json schema version.

@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/projanvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/config"
 )
 
 // tmpSeq makes each atomic-write temp file unique. A process id alone is not

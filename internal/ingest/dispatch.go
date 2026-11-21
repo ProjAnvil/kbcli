@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/projanvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
 // chunkMeta carries the per-file context shared by every chunk of a source.

@@ -14,7 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/projanvil/kbcli/internal/i18n"
+	"github.com/ProjAnvil/kbcli/internal/i18n"
 )
 
 // Fact categories mirror Porto's SessionFact enum.

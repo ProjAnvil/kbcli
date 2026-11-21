@@ -4,9 +4,9 @@ package agent
 import (
 	"context"
 
-	"github.com/projanvil/kbcli/internal/config"
-	"github.com/projanvil/kbcli/internal/index"
-	"github.com/projanvil/kbcli/internal/session"
+	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/session"
 )
 
 // Turn is one chat message. Role is "user" or "assistant".

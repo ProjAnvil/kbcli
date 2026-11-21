@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/projanvil/kbcli/internal/config"
-	"github.com/projanvil/kbcli/internal/retrieval"
+	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/retrieval"
 	"github.com/projanvil/langchain-golang/core/language"
 	"github.com/projanvil/langchain-golang/core/messages"
 	"github.com/projanvil/langchain-golang/core/modelconfig"

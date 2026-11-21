@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/projanvil/kbcli/internal/ingest"
+	"github.com/ProjAnvil/kbcli/internal/ingest"
 )
 
 // Risk is the preflight risk level.

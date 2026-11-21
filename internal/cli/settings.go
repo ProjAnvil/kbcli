@@ -9,10 +9,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/projanvil/kbcli/internal/app"
-	"github.com/projanvil/kbcli/internal/config"
-	"github.com/projanvil/kbcli/internal/index"
-	"github.com/projanvil/kbcli/internal/settings"
+	"github.com/ProjAnvil/kbcli/internal/app"
+	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/settings"
 )
 
 // settingsStore resolves the workspace root from --dir (or cwd) and opens

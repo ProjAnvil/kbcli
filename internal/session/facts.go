@@ -9,7 +9,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/projanvil/kbcli/internal/i18n"
+	"github.com/ProjAnvil/kbcli/internal/i18n"
 )
 
 // tokenSet is a lowercase bag of word tokens plus, for CJK runs, single

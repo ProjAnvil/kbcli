@@ -8,10 +8,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/projanvil/kbcli/internal/agent"
-	"github.com/projanvil/kbcli/internal/config"
-	"github.com/projanvil/kbcli/internal/index"
-	"github.com/projanvil/kbcli/internal/scan"
+	"github.com/ProjAnvil/kbcli/internal/agent"
+	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/scan"
 )
 
 type confirmCapture struct {

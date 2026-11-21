@@ -14,11 +14,11 @@ const defaultTopK = 6
 // Retrieval is a brute-force linear scan: every stored vector is compared to
 // the query vector, so a query costs O(n*d) where n is the number of chunks
 // and d the vector width. This is deliberately simple (no index-build step,
-// exact results) and stays responsive up to roughly 200k chunks at 384 dims
-// on a laptop. Beyond that an approximate-nearest-neighbour structure
-// (HNSW/IVF) would be needed, at the cost of extra complexity and a recall
-// trade-off. Following the Sentia convention, score = 1/(1+dist): higher is
-// better. An empty query is a valid string and is embedded normally.
+// exact results). Cost grows linearly with the corpus; larger corpora may need
+// an approximate-nearest-neighbour structure (HNSW/IVF), at the cost of extra
+// complexity and a recall trade-off. Following the Sentia convention,
+// score = 1/(1+dist): higher is better. An empty query is a valid string and
+// is embedded normally.
 func (s *store) Search(query string, k int) ([]Hit, error) {
 	if k <= 0 {
 		k = defaultTopK

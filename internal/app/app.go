@@ -14,17 +14,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/projanvil/kbcli/internal/agent"
-	"github.com/projanvil/kbcli/internal/config"
-	"github.com/projanvil/kbcli/internal/embed"
-	"github.com/projanvil/kbcli/internal/i18n"
-	"github.com/projanvil/kbcli/internal/index"
-	"github.com/projanvil/kbcli/internal/ingest"
-	"github.com/projanvil/kbcli/internal/retrieval"
-	"github.com/projanvil/kbcli/internal/scan"
-	"github.com/projanvil/kbcli/internal/session"
-	"github.com/projanvil/kbcli/internal/settings"
-	"github.com/projanvil/kbcli/internal/tui"
+	"github.com/ProjAnvil/kbcli/internal/agent"
+	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/embed"
+	"github.com/ProjAnvil/kbcli/internal/i18n"
+	"github.com/ProjAnvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/ingest"
+	"github.com/ProjAnvil/kbcli/internal/retrieval"
+	"github.com/ProjAnvil/kbcli/internal/scan"
+	"github.com/ProjAnvil/kbcli/internal/session"
+	"github.com/ProjAnvil/kbcli/internal/settings"
+	"github.com/ProjAnvil/kbcli/internal/tui"
 )
 
 // App holds the state of one kbcli session.

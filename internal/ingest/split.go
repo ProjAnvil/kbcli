@@ -3,7 +3,7 @@ package ingest
 import (
 	"strings"
 
-	"github.com/projanvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
 // passage is one chunk of body text plus the heading it belongs to. The split

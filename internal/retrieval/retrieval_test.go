@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/projanvil/kbcli/internal/config"
-	"github.com/projanvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
 // fakeStore implements the full index.Store contract. Search returns a fixed

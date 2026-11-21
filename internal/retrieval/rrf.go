@@ -3,7 +3,7 @@ package retrieval
 import (
 	"sort"
 
-	"github.com/projanvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
 // defaultRRFK is Porto's reciprocal-rank smoothing constant.

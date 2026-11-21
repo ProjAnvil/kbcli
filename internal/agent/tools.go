@@ -6,9 +6,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/projanvil/kbcli/internal/config"
-	"github.com/projanvil/kbcli/internal/index"
-	"github.com/projanvil/kbcli/internal/retrieval"
+	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/retrieval"
 	coretools "github.com/projanvil/langchain-golang/core/tools"
 )
 

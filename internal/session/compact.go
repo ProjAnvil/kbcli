@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/projanvil/kbcli/internal/i18n"
+	"github.com/ProjAnvil/kbcli/internal/i18n"
 )
 
 // Compact summarizes older turns once history exceeds compact_after_turns.

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-11-22
+
+### Changed
+
+- The Go module path now matches the GitHub organisation casing
+  (`github.com/ProjAnvil/kbcli`); `go install github.com/ProjAnvil/kbcli/cmd/kbcli@v0.1.1`
+  is the documented remote install.
+- `kbcli version` now reports the installed module version for binaries
+  installed with `go install pkg@version`, while Makefile `-ldflags` injection
+  still takes precedence.
+
+### Added
+
+- A GitHub Actions release workflow cross-compiles darwin/amd64, darwin/arm64,
+  linux/amd64, linux/arm64 and windows/amd64 binaries and uploads them as
+  release assets on every `v*` tag push.
+
 ## [0.1.0] - 2026-11-21
 
 ### Added

@@ -8,10 +8,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/projanvil/kbcli/internal/agent"
-	"github.com/projanvil/kbcli/internal/config"
-	"github.com/projanvil/kbcli/internal/i18n"
-	"github.com/projanvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/agent"
+	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/i18n"
+	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
 // answerMsg carries the result of one agent question back to Update.
