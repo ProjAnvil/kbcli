@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/embed"
 	"github.com/ProjAnvil/kbcli/internal/index"
 	"github.com/ProjAnvil/kbcli/internal/settings"
 )
@@ -333,6 +334,83 @@ func TestIndexSignatureStaleDetection(t *testing.T) {
 	}
 	if !slices.Contains(fields, "chunk_size") {
 		t.Fatalf("stale fields = %v, want chunk_size", fields)
+	}
+}
+
+// fakeCounterEmbedder implements both Embedder and TokenCounter so a test can
+// prove build() wires the counter into ingest.Options without a model download.
+type fakeCounterEmbedder struct{}
+
+func (fakeCounterEmbedder) Dim() int        { return embed.Dim }
+func (fakeCounterEmbedder) Version() string { return "fake-counter-v1" }
+func (fakeCounterEmbedder) Embed(string) ([]float32, error) {
+	return make([]float32, embed.Dim), nil
+}
+func (fakeCounterEmbedder) EmbedBatch(texts []string) ([][]float32, error) {
+	out := make([][]float32, len(texts))
+	for i := range out {
+		out[i] = make([]float32, embed.Dim)
+	}
+	return out, nil
+}
+func (fakeCounterEmbedder) Close() error                      { return nil }
+func (fakeCounterEmbedder) CountForEmbedding(text string) int { return len([]rune(text)) }
+func (fakeCounterEmbedder) MaxTokens() int                    { return 64 }
+
+func TestBuildWithLocalEmbedderKeepsRuneChunking(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("KBCLI_INDEX", "")
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "long.md"), "# A\n\n"+strings.Repeat("a", 1500)+"\n")
+
+	cfg := testConfig(t)
+	cfg.ChunkSize = 600
+	a, err := Open(cfg, root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Build(context.Background(), root, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := embed.TokenCounterOf(a.emb); ok {
+		t.Fatal("local embedder must not implement TokenCounter")
+	}
+	chunks := a.store.Chunks()
+	if len(chunks) < 2 {
+		t.Fatalf("rune chunking produced %d chunks, want >= 2", len(chunks))
+	}
+	for _, c := range chunks {
+		if n := len([]rune(c.Body)); n > 600 {
+			t.Errorf("local chunk body has %d runes, want <= 600", n)
+		}
+	}
+}
+
+func TestBuildUsesInjectedTokenCounter(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("KBCLI_INDEX", "")
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "long.md"), "# A\n\n"+strings.Repeat("a", 200)+"\n")
+
+	cfg := testConfig(t)
+	cfg.ChunkSize = 200
+	a, err := Open(cfg, root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.emb = fakeCounterEmbedder{} // injected; no model download
+	n, err := a.Build(context.Background(), root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n <= 1 {
+		t.Fatalf("injected counter did not cap chunks: %d chunks (rune chunking would give 1)", n)
+	}
+	for _, c := range a.store.Chunks() {
+		text := c.Title + "\n" + c.Heading + "\n" + c.Body
+		if got := len([]rune(text)); got > 48 { // MaxTokens(64) - 16
+			t.Errorf("chunk text has %d runes, budget is 48: %q", got, c.Body)
+		}
 	}
 }
 

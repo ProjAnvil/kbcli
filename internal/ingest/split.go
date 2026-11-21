@@ -1,8 +1,10 @@
 package ingest
 
 import (
+	"fmt"
 	"strings"
 
+	"github.com/ProjAnvil/kbcli/internal/embed"
 	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
@@ -15,8 +17,97 @@ type passage struct {
 
 // splitFallbackChunks is the fallback path's index.Chunk producer: it splits
 // text and stamps every chunk with Ordinal, Source, Page and Title from meta.
-func splitFallbackChunks(text string, size int, meta chunkMeta) []index.Chunk {
+func splitFallbackChunks(text string, size int, meta chunkMeta) ([]index.Chunk, error) {
 	return buildChunks(splitFallback(text, size), meta, 0)
+}
+
+// capPassagesByTokens re-splits passages whose embedding text would exceed the
+// model's real token limit. It runs before ordinals and IDs are assigned so
+// every emitted chunk is within the cap. A nil counter is the local hashing
+// embedder path: passages are returned untouched and rune-based chunking stays
+// exactly as before. An embedding prefix that alone exceeds the budget is a
+// hard error rather than an over-cap chunk.
+func capPassagesByTokens(passages []passage, meta chunkMeta, counter embed.TokenCounter) ([]passage, error) {
+	if counter == nil {
+		return passages, nil
+	}
+	maxTokens := meta.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = counter.MaxTokens()
+	}
+	budget := maxTokens - 16
+	if budget <= 0 {
+		budget = 1
+	}
+	out := make([]passage, 0, len(passages))
+	for _, p := range passages {
+		// makeChunk builds Title+"\n"+Heading+"\n"+Body, and the provider's
+		// CountForEmbedding adds its internal prefix, so this is the exact
+		// text whose token count must stay within budget.
+		prefix := meta.Title + "\n" + p.heading + "\n"
+		if counter.CountForEmbedding(prefix) > budget {
+			return nil, fmt.Errorf("ingest: embedding prefix exceeds model token budget for source %q", meta.Source)
+		}
+		if counter.CountForEmbedding(prefix+p.body) <= budget {
+			out = append(out, p)
+			continue
+		}
+		var cur string
+		flush := func() {
+			if cur != "" {
+				out = append(out, passage{heading: p.heading, body: cur})
+				cur = ""
+			}
+		}
+		for _, block := range splitBlocks(p.body) {
+			if block == "" {
+				continue
+			}
+			if counter.CountForEmbedding(prefix+block) > budget {
+				flush()
+				for _, piece := range hardSplitByTokens(prefix, block, budget, counter) {
+					out = append(out, passage{heading: p.heading, body: piece})
+				}
+				continue
+			}
+			if cur == "" {
+				cur = block
+			} else if counter.CountForEmbedding(prefix+cur+"\n\n"+block) <= budget {
+				cur += "\n\n" + block
+			} else {
+				flush()
+				cur = block
+			}
+		}
+		flush()
+	}
+	return out, nil
+}
+
+// hardSplitByTokens splits s into the longest rune pieces whose complete
+// embedding text (prefix+piece) fits the budget. The binary search always
+// accepts at least one rune, so an unfitably large prefix cannot loop forever.
+func hardSplitByTokens(prefix, s string, budget int, counter embed.TokenCounter) []string {
+	runes := []rune(s)
+	var out []string
+	for start := 0; start < len(runes); {
+		lo, hi, best := start+1, len(runes), start+1
+		for lo <= hi {
+			mid := lo + (hi-lo)/2
+			if counter.CountForEmbedding(prefix+string(runes[start:mid])) <= budget {
+				best = mid
+				lo = mid + 1
+			} else {
+				hi = mid - 1
+			}
+		}
+		piece := string(runes[start:best])
+		if piece != "" {
+			out = append(out, piece)
+		}
+		start = best
+	}
+	return out
 }
 
 // mdSection is one heading-bounded region; heading is empty for the preamble.

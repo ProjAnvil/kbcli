@@ -119,11 +119,9 @@ type Config struct {
 // switches default to the pre-existing behaviour (pure vector retrieval, no
 // rerank, no query transform), so an upgraded install changes nothing.
 //
-// ChunkSize=1024 runes with ChunkOverlap=200 is a general-purpose baseline,
-// not a universal optimum: the best values depend on the corpus, query type
-// and embedding model. kbcli's splitter counts runes, not tokens. Tune both
-// with retrieval evaluation on your own queries before changing them, and
-// re-index afterwards.
+// Defaults match LangChain's RecursiveCharacterTextSplitter character-splitting
+// defaults: 4000 units with 200 overlap. kbcli counts Go runes, the Unicode
+// code-point analogue of Python len().
 func Default() *Config {
 	return &Config{
 		ChatProvider:             ChatProviderOpenAI,
@@ -134,7 +132,7 @@ func Default() *Config {
 		IndexFileName:            DefaultIndexFileName,
 		TimeoutSeconds:           120,
 		MaxIterations:            8,
-		ChunkSize:                1024,
+		ChunkSize:                4000,
 		ChunkOverlap:             200,
 		TopK:                     6,
 		RetrievalMethod:          RetrievalVector,

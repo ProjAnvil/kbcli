@@ -400,6 +400,98 @@ func TestIngestStableChunkIDs(t *testing.T) {
 	}
 }
 
+// fakeTokenCounter counts whitespace-separated tokens plus a fixed prefix
+// cost, so tests can exercise the model-driven cap without a real model.
+type fakeTokenCounter struct{ max int }
+
+func (f fakeTokenCounter) MaxTokens() int { return f.max }
+func (f fakeTokenCounter) CountForEmbedding(text string) int {
+	return len(strings.Fields(text)) + 1
+}
+
+// A small MaxTokens forces a cap far below the 600-rune default, and changing
+// MaxTokens changes the chunk count: the cap is model-driven, not hardcoded.
+func TestIngestTokenCapRespectsModelLimit(t *testing.T) {
+	dir := t.TempDir()
+	source := strings.Repeat("word ", 60) + "end"
+	p := writeFile(t, dir, "capped.md", []byte("# Alpha\n\n"+source+"\n"))
+	counts := map[int]int{}
+	for _, max := range []int{32, 64} {
+		opts := DefaultOptions()
+		opts.TokenCounter = fakeTokenCounter{max: max}
+		res, err := ChunkFile(dir, p, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertChunkInvariants(t, res.Chunks)
+		if len(res.Chunks) == 0 {
+			t.Fatalf("max=%d: no chunks produced", max)
+		}
+		var joined strings.Builder
+		for _, c := range res.Chunks {
+			text := c.Title + "\n" + c.Heading + "\n" + c.Body
+			if n := opts.TokenCounter.CountForEmbedding(text); n > max {
+				t.Errorf("max=%d: chunk has %d tokens: %q", max, n, c.Body)
+			}
+			joined.WriteString(c.Body)
+		}
+		got := strings.Join(strings.Fields(joined.String()), " ")
+		want := strings.Join(strings.Fields(source), " ")
+		if got != want {
+			t.Errorf("max=%d: bodies do not reconstruct source:\n got %q\nwant %q", max, got, want)
+		}
+		counts[max] = len(res.Chunks)
+	}
+	if counts[32] <= counts[64] {
+		t.Fatalf("cap is not model-driven: max=32 -> %d chunks, max=64 -> %d", counts[32], counts[64])
+	}
+}
+
+// A prefix that alone exceeds the budget must be reported, never emitted as
+// an over-cap chunk. MaxTokens=12 gives budget=1, below the two-word prefix.
+func TestIngestPrefixOverBudgetReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	p := writeFile(t, dir, "capped.md", []byte("# Alpha\n\nbody text\n"))
+	opts := DefaultOptions()
+	opts.TokenCounter = fakeTokenCounter{max: 12}
+	res, err := ChunkFile(dir, p, opts)
+	if err == nil {
+		t.Fatalf("expected prefix-over-budget error, got chunks: %+v", res.Chunks)
+	}
+	if !strings.Contains(err.Error(), "exceeds model token budget for source") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "capped.md") {
+		t.Fatalf("error must name the source: %v", err)
+	}
+}
+
+// PDF chunking used to bypass buildChunks, so rembed capping never ran on a
+// page. A long single-page PDF must now be capped and keep page/ordinal data.
+func TestIngestPDFTokenCapAppliesToPages(t *testing.T) {
+	dir := t.TempDir()
+	p := writeFile(t, dir, "cap.pdf", buildTestPDF(strings.Repeat("word ", 80)))
+	opts := DefaultOptions()
+	opts.TokenCounter = fakeTokenCounter{max: 32}
+	res, err := ChunkFile(dir, p, opts)
+	if err != nil {
+		t.Skipf("minimal PDF is not extractable on this platform: %v", err)
+	}
+	if len(res.Chunks) <= 1 {
+		t.Fatalf("PDF page was not capped: %d chunks (rune splitting would give 1)", len(res.Chunks))
+	}
+	assertChunkInvariants(t, res.Chunks)
+	for _, c := range res.Chunks {
+		text := c.Title + "\n" + c.Heading + "\n" + c.Body
+		if n := opts.TokenCounter.CountForEmbedding(text); n > 32 {
+			t.Errorf("PDF chunk has %d tokens, cap is 32: %q", n, c.Body)
+		}
+		if c.Page != 1 {
+			t.Errorf("PDF chunk Page = %d, want 1", c.Page)
+		}
+	}
+}
+
 func TestIngestEmptyFile(t *testing.T) {
 	dir := t.TempDir()
 	p := writeFile(t, dir, "empty.md", nil)

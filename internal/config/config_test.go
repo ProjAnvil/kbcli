@@ -16,7 +16,7 @@ func TestLoadReturnsDefaultsWhenMissing(t *testing.T) {
 	if cfg.Embedder != ProviderLocal || cfg.Agent != AgentReact {
 		t.Fatalf("defaults = %+v", cfg)
 	}
-	if cfg.TopK != 6 || cfg.ChunkSize != 1024 || cfg.ChunkOverlap != 200 {
+	if cfg.TopK != 6 || cfg.ChunkSize != 4000 || cfg.ChunkOverlap != 200 {
 		t.Fatalf("numeric defaults = %+v", cfg)
 	}
 	if _, err := os.Stat(filepath.Join(mustDir(t), FileName)); !os.IsNotExist(err) {
@@ -26,11 +26,37 @@ func TestLoadReturnsDefaultsWhenMissing(t *testing.T) {
 
 func TestChunkingBaselineDefaults(t *testing.T) {
 	d := Default()
-	if d.ChunkSize != 1024 {
-		t.Fatalf("ChunkSize = %d, want 1024", d.ChunkSize)
+	if d.ChunkSize != 4000 {
+		t.Fatalf("ChunkSize = %d, want 4000", d.ChunkSize)
 	}
 	if d.ChunkOverlap != 200 {
 		t.Fatalf("ChunkOverlap = %d, want 200", d.ChunkOverlap)
+	}
+	keys := IndexAffectingKeys()
+	for _, want := range []string{"chunk_size", "chunk_overlap"} {
+		found := false
+		for _, k := range keys {
+			if k == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%q must be index affecting, got %v", want, keys)
+		}
+	}
+}
+
+func TestChunkingLangChainDefaults(t *testing.T) {
+	d := Default()
+	if d.ChunkSize != 4000 {
+		t.Fatalf("ChunkSize = %d, want 4000", d.ChunkSize)
+	}
+	if d.ChunkOverlap != 200 {
+		t.Fatalf("ChunkOverlap = %d, want 200", d.ChunkOverlap)
+	}
+	if err := d.Validate(); err != nil {
+		t.Fatalf("default config invalid: %v", err)
 	}
 	keys := IndexAffectingKeys()
 	for _, want := range []string{"chunk_size", "chunk_overlap"} {

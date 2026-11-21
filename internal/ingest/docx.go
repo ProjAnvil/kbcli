@@ -23,7 +23,7 @@ func chunkDOCX(data []byte, meta chunkMeta, opts Options) ([]index.Chunk, error)
 	if strings.TrimSpace(md) == "" {
 		return []index.Chunk{}, nil
 	}
-	return splitFallbackChunks(md, chunkSize(opts), meta), nil
+	return splitFallbackChunks(md, chunkSize(opts), meta)
 }
 
 // docxToMarkdown walks w:p / w:r / w:t, maps pStyle Heading1..4 to "# ".."#### ",

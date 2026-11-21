@@ -22,7 +22,7 @@ func chunkText(text string, ext string, meta chunkMeta, opts Options) ([]index.C
 	if ext == ".html" || ext == ".htm" {
 		text = stripHTML(text)
 	}
-	return splitFallbackChunks(text, chunkSize(opts), meta), nil
+	return splitFallbackChunks(text, chunkSize(opts), meta)
 }
 
 // stripHTML removes tags and the contents of script/style elements using a

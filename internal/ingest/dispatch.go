@@ -9,14 +9,17 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ProjAnvil/kbcli/internal/embed"
 	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
 // chunkMeta carries the per-file context shared by every chunk of a source.
 type chunkMeta struct {
-	Source string // path relative to root, slash-separated
-	Title  string // base filename without its extension
-	Page   int    // 1-based page for PDFs, 0 otherwise
+	Source       string // path relative to root, slash-separated
+	Title        string // base filename without its extension
+	Page         int    // 1-based page for PDFs, 0 otherwise
+	TokenCounter embed.TokenCounter
+	MaxTokens    int
 }
 
 // makeChunk builds one index.Chunk. Text is the exact string handed to the
@@ -36,12 +39,18 @@ func makeChunk(meta chunkMeta, ordinal int, heading, body string) index.Chunk {
 }
 
 // buildChunks turns passages into Chunks with continuous, zero-based ordinals.
-func buildChunks(passages []passage, meta chunkMeta, startOrdinal int) []index.Chunk {
+// Token capping happens first so ordinals and IDs are assigned only after the
+// final passage boundaries are known.
+func buildChunks(passages []passage, meta chunkMeta, startOrdinal int) ([]index.Chunk, error) {
+	passages, err := capPassagesByTokens(passages, meta, meta.TokenCounter)
+	if err != nil {
+		return nil, err
+	}
 	chunks := make([]index.Chunk, 0, len(passages))
 	for i, p := range passages {
 		chunks = append(chunks, makeChunk(meta, startOrdinal+i, p.heading, p.body))
 	}
-	return chunks
+	return chunks, nil
 }
 
 // chunkID is the stable identity of a chunk: the first 16 hex characters of
@@ -98,6 +107,10 @@ func chunkFile(root, path string, opts Options) (Result, error) {
 	meta := chunkMeta{
 		Source: relPath(root, path),
 		Title:  titleOf(path),
+	}
+	if opts.TokenCounter != nil {
+		meta.TokenCounter = opts.TokenCounter
+		meta.MaxTokens = opts.TokenCounter.MaxTokens()
 	}
 
 	var text string

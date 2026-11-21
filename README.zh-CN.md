@@ -102,17 +102,13 @@ kbcli settings set top_k 9     # 一个稀疏的工作区覆盖
 
 ### 分块大小与重叠
 
-**不存在通用的最佳分块大小或重叠**：最优值取决于语料、查询类型与嵌入模型。kbcli 以通用基线作为起点：`chunk_size: 1024` 个 rune、`chunk_overlap: 200` 个 rune。这只是起点，并非通用最优；请用检索评估在自己的查询上调整这两个值。kbcli 的切分器按 **rune 计数，而非 token**；1024 个 rune 并不意味着等于 1024 个 token。200 个 rune 约为 1024 的 20%，落在常见的实用重叠区间内，但不声称它通用最优或已被论文证明。
+kbcli 的默认值现在与 LangChain 的 `RecursiveCharacterTextSplitter` 字符切分默认值一致：`chunk_size: 4000`、`chunk_overlap: 200`。kbcli 按 **Go rune 计数**，即 Unicode 码点，相当于 LangChain 中 Python `len()` 的计数方式，而非 token。
 
-文献证据（仅作参考，并非通用最优）：
+也存在基于 token 的切分器，它们使用特定模型的 tokenizer；kbcli 的 rune 设置是面向用户、与模型无关的对应方式。如果选择 `embedder: rembed`，kbcli 还会在切分时把分块限制在该模型的 token 上限内——rune 配置仍是面向用户的设置。
 
-- Bhat 等（Fraunhofer IAIS），*Rethinking Chunk Size for Long-Document Retrieval: A Multi-Dataset Analysis*（[arXiv:2505.21700](https://arxiv.org/abs/2505.21700)）：64–128 token 更适合简洁的事实型答案，512–1024 token 更适合需要更广上下文的任务；敏感度随嵌入模型变化。
-- Ammar 等，*Optimizing Retrieval-Augmented Generation: Analysis of Hyperparameter Impact on Performance and Efficiency*（[arXiv:2505.08445](https://arxiv.org/abs/2505.08445)）：测试了朴素固定分块 1024/2048/4096 token、重叠 128/512；在一个仅 100 题的英文事实型问答集上 1024/128 胜出，1024 时增大重叠没有可测收益。
-- Shaukat 等，*A Systematic Investigation of Document Chunking Strategies and Embedding Sensitivity*（[arXiv:2603.06976](https://arxiv.org/abs/2603.06976)）：跨 36 种方法与 5 种嵌入模型，内容感知／段落分组明显优于固定字符切分，但结果随领域与嵌入模型变化。
-- Amiri 与 Bocklitz，*Chunk Twice, Embed Once*（[arXiv:2506.17277v2](https://arxiv.org/abs/2506.17277)）：嵌入模型的选择影响最大；中等偏大的分块是实用的起点，较低的重叠通常更受青睐。
-- Qu 等，*Is Semantic Chunking Worth the Computational Cost?*（[NAACL 2025 Findings](https://aclanthology.org/2025.findings-naacl.114/)）：语义分块的计算成本没有被稳定的收益所证明。
+`chunk_size` 与 `chunk_overlap` 都会影响索引：修改任一项都会使 `.kbvec` 索引失效，必须重建索引（`:reindex` / `kbcli reindex`）。请用 recall@k 指导调整。
 
-`chunk_size` 与 `chunk_overlap` 都会影响索引：修改任一项都会使 `.kbvec` 索引失效，必须重建索引（`:reindex` / `kbcli reindex`）。调整前请先用检索评估测量 recall@k；只有在评估显示证据在分块边界丢失时才调整重叠。
+背景参考：[LangChain text splitters](https://python.langchain.com/docs/concepts/text_splitters/)。
 
 <a id="settings-screen"></a>
 

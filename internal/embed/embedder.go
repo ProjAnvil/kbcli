@@ -35,6 +35,24 @@ type Embedder interface {
 	Close() error
 }
 
+// TokenCounter is an optional capability of an Embedder that can count the
+// exact tokenized length of the text that will be embedded, plus the model's
+// real per-input token limit. Embedders that do not implement it (such as the
+// local hashing embedder) keep their existing rune-based chunking unchanged.
+type TokenCounter interface {
+	// CountForEmbedding returns the token count of text as it will actually
+	// be embedded, including any internal prefix the provider prepends.
+	CountForEmbedding(text string) int
+	// MaxTokens is the maximum number of input tokens the model accepts.
+	MaxTokens() int
+}
+
+// TokenCounterOf reports whether e implements TokenCounter.
+func TokenCounterOf(e Embedder) (TokenCounter, bool) {
+	tc, ok := e.(TokenCounter)
+	return tc, ok
+}
+
 // New builds an embedder for the named provider. modelRef is ignored by the
 // local provider. Implemented in provider.go.
 func New(provider, modelRef string) (Embedder, error) {

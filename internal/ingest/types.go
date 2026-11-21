@@ -5,7 +5,10 @@
 // dependency-free ZIP/XML DOCX reader that emits Markdown.
 package ingest
 
-import "github.com/ProjAnvil/kbcli/internal/index"
+import (
+	"github.com/ProjAnvil/kbcli/internal/embed"
+	"github.com/ProjAnvil/kbcli/internal/index"
+)
 
 // Options controls directory walking and chunk sizes.
 type Options struct {
@@ -15,6 +18,10 @@ type Options struct {
 	ExcludeDir   []string
 	MaxFileBytes int64
 	MaxPDFPages  int
+	// TokenCounter, when non-nil, caps chunk bodies by the embedder's real
+	// token limit. The local hashing embedder leaves it nil and keeps the
+	// existing rune-based chunking.
+	TokenCounter embed.TokenCounter
 }
 
 // Result is the chunking output for a single file.

@@ -37,7 +37,7 @@ func chunkMarkdown(text string, meta chunkMeta, opts Options) ([]index.Chunk, er
 	}
 
 	passages := markdownPassages(headerSplitter.SplitText(text), recursive, size)
-	return buildChunks(passages, meta, 0), nil
+	return buildChunks(passages, meta, 0)
 }
 
 // markdownPassages turns header-split documents into passages. Overlong

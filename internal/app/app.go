@@ -321,6 +321,10 @@ func (a *App) build(ctx context.Context, root, out string, on func(Progress)) (i
 	opts := ingest.DefaultOptions()
 	opts.ChunkSize = a.cfg.ChunkSize
 	opts.ChunkOverlap = a.cfg.ChunkOverlap
+	if tc, ok := embed.TokenCounterOf(emb); ok {
+		opts.TokenCounter = tc
+		fmt.Fprintf(os.Stderr, "kbcli: %s caps chunks at %d tokens; chunk_size=%d is bounded at split time\n", a.cfg.Embedder, tc.MaxTokens(), a.cfg.ChunkSize)
+	}
 	// Never index our own output file.
 	opts.ExcludeDir = append(opts.ExcludeDir, filepath.Base(outPath))
 
@@ -421,9 +425,16 @@ func (a *App) Update(ctx context.Context, target string) (int, error) {
 		return 0, fmt.Errorf("app: stat %s: %w", abs, err)
 	}
 
+	emb, err := a.ensureEmbedder()
+	if err != nil {
+		return 0, err
+	}
 	opts := ingest.DefaultOptions()
 	opts.ChunkSize = a.cfg.ChunkSize
 	opts.ChunkOverlap = a.cfg.ChunkOverlap
+	if tc, ok := embed.TokenCounterOf(emb); ok {
+		opts.TokenCounter = tc
+	}
 
 	var paths []string
 	if st.IsDir() {

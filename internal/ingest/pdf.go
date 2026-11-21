@@ -5,8 +5,8 @@ import (
 	"os"
 	"strings"
 
-	pdf "github.com/ledongthuc/pdf"
 	"github.com/ProjAnvil/kbcli/internal/index"
+	pdf "github.com/ledongthuc/pdf"
 )
 
 // chunkPDF extracts row-ordered text and splits PER PAGE so every chunk can
@@ -64,10 +64,12 @@ func chunkPDF(data []byte, meta chunkMeta, opts Options) ([]index.Chunk, error) 
 		}
 		pageMeta := meta
 		pageMeta.Page = i
-		for _, p := range splitFallback(text, size) {
-			chunks = append(chunks, makeChunk(pageMeta, ordinal, p.heading, p.body))
-			ordinal++
+		pageChunks, err := buildChunks(splitFallback(text, size), pageMeta, ordinal)
+		if err != nil {
+			return nil, err
 		}
+		chunks = append(chunks, pageChunks...)
+		ordinal += len(pageChunks)
 	}
 	return chunks, nil
 }

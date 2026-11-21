@@ -157,6 +157,14 @@ func TestLocalClose(t *testing.T) {
 	}
 }
 
+// The local hashing embedder has no model token limit, so it must not satisfy
+// TokenCounter and must keep the existing rune-based chunking behaviour.
+func TestLocalEmbedderIsNotTokenCounter(t *testing.T) {
+	if tc, ok := TokenCounterOf(newLocal()); ok {
+		t.Fatalf("local embedder unexpectedly implements TokenCounter: %v", tc)
+	}
+}
+
 // The embedder must be safe for concurrent use; results must match serial
 // embedding regardless of how calls interleave.
 func TestLocalEmbedConcurrent(t *testing.T) {

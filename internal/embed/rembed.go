@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/rostamlabs/rembed"
 )
@@ -18,11 +19,15 @@ const queryPrefix = "query: "
 // Embedder contract. rembed.Embedder is documented safe for concurrent use and
 // this wrapper adds no mutable state, so it is safe for concurrent use too.
 type rembedEmbedder struct {
-	model   *rembed.Embedder
-	version string
+	model     *rembed.Embedder
+	version   string
+	maxTokens int
 }
 
-var _ Embedder = (*rembedEmbedder)(nil)
+var (
+	_ Embedder     = (*rembedEmbedder)(nil)
+	_ TokenCounter = (*rembedEmbedder)(nil)
+)
 
 // newRembed loads the neural model identified by ref. Nothing is downloaded at
 // package init; rembed.Load may fetch weights from the Hugging Face Hub on the
@@ -52,7 +57,17 @@ func newRembed(ref string) (*rembedEmbedder, error) {
 		_ = m.Close()
 		return nil, fmt.Errorf("embed: rembed model %q has dimension %d, want %d", ref, got, Dim)
 	}
-	return &rembedEmbedder{model: m, version: rembedVersion(ref)}, nil
+	// Probe the model's real input limit once. rembed.Tokenize truncates at the
+	// model's MaxSeqLen, so a long input saturates at the exact limit. This
+	// avoids importing rembed internal constants and works for custom models.
+	// rembed.Tokenize is documented as not a stable part of the embedding API;
+	// all use of it in kbcli is isolated to this file.
+	maxTokens := len(m.Tokenize(strings.Repeat("a ", 2048)))
+	if maxTokens <= 0 {
+		_ = m.Close()
+		return nil, fmt.Errorf("embed: rembed model %q reported no token limit", ref)
+	}
+	return &rembedEmbedder{model: m, version: rembedVersion(ref), maxTokens: maxTokens}, nil
 }
 
 func (e *rembedEmbedder) Dim() int { return Dim }
@@ -92,6 +107,16 @@ func (e *rembedEmbedder) EmbedBatch(texts []string) ([][]float32, error) {
 }
 
 func (e *rembedEmbedder) Close() error { return e.model.Close() }
+
+// CountForEmbedding counts the exact text that will be embedded: rembed's
+// EmbedBatch prepends queryPrefix to every text, so it is included here.
+// rembed.Tokenize is unstable; this is the only caller in kbcli.
+func (e *rembedEmbedder) CountForEmbedding(text string) int {
+	return len(e.model.Tokenize(queryPrefix + text))
+}
+
+// MaxTokens returns the cached per-input limit probed at load time.
+func (e *rembedEmbedder) MaxTokens() int { return e.maxTokens }
 
 // rembedVersion builds the retrieval-domain key for a neural model ref.
 func rembedVersion(ref string) string { return "rembed:" + ref }

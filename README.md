@@ -102,17 +102,13 @@ The [settings screen](#settings-screen) (`:settings`) edits the same catalog in 
 
 ### Chunk size and overlap
 
-There is **no universal optimal chunk size or overlap**: the best values depend on the corpus, the query type and the embedding model. kbcli starts from a general-purpose baseline of `chunk_size: 1024` runes and `chunk_overlap: 200` runes. This is a starting point, not a universal optimum; tune both with retrieval evaluation on your own queries. kbcli's splitter counts **runes, not tokens** — 1024 runes is not a claim that 1024 runes equals 1024 tokens. A 200-rune overlap is roughly 20% of 1024, within the common practical overlap range, but it is not claimed to be universally optimal or paper-proven.
+kbcli's defaults now match LangChain's `RecursiveCharacterTextSplitter` character-splitting defaults: `chunk_size: 4000` and `chunk_overlap: 200`. kbcli counts **Go runes**, the Unicode code-point analogue of Python's `len()` in LangChain, rather than tokens.
 
-What the literature supports (guidance, not a universal optimum):
+Token-based splitters exist and use model-specific tokenizers; kbcli's rune setting is the user-facing, model-independent analogue. If you select `embedder: rembed`, kbcli additionally caps chunks at that model's token limit at split time — the rune configuration remains the user-facing setting.
 
-- Bhat et al. (Fraunhofer IAIS), *Rethinking Chunk Size for Long-Document Retrieval: A Multi-Dataset Analysis* ([arXiv:2505.21700](https://arxiv.org/abs/2505.21700)): 64–128 tokens favour concise fact answers, 512–1024 tokens broader context; sensitivity shifts with the embedding model.
-- Ammar et al., *Optimizing Retrieval-Augmented Generation: Analysis of Hyperparameter Impact on Performance and Efficiency* ([arXiv:2505.08445](https://arxiv.org/abs/2505.08445)): naive fixed sizes 1024/2048/4096 tokens with overlap 128/512; 1024/128 won on a limited 100-question English factual QA set, and more overlap at 1024 gave no measurable benefit.
-- Shaukat et al., *A Systematic Investigation of Document Chunking Strategies and Embedding Sensitivity* ([arXiv:2603.06976](https://arxiv.org/abs/2603.06976)): across 36 methods and five embeddings, content-aware / paragraph grouping beat fixed character splitting, but results are domain- and embedding-sensitive.
-- Amiri and Bocklitz, *Chunk Twice, Embed Once* ([arXiv:2506.17277v2](https://arxiv.org/abs/2506.17277)): embedding choice mattered most, medium-to-large chunks are a practical starting point, and low overlap was generally favoured.
-- Qu et al., *Is Semantic Chunking Worth the Computational Cost?* ([NAACL 2025 Findings](https://aclanthology.org/2025.findings-naacl.114/)): semantic chunking's cost was not justified by consistent gains.
+Both `chunk_size` and `chunk_overlap` are index-affecting: changing either invalidates the `.kbvec` index and requires a reindex (`:reindex` / `kbcli reindex`). Let recall@k guide tuning.
 
-Both `chunk_size` and `chunk_overlap` are index-affecting: changing either invalidates the `.kbvec` index and requires a reindex (`:reindex` / `kbcli reindex`). Measure recall@k before tuning, and change overlap only when evaluation shows evidence being lost across chunk boundaries.
+Background: [LangChain text splitters](https://python.langchain.com/docs/concepts/text_splitters/).
 
 <a id="settings-screen"></a>
 
