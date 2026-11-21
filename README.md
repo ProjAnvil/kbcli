@@ -106,6 +106,10 @@ The [settings screen](#settings-screen) (`:settings`) edits the same catalog in 
 
 `:settings` opens a master-detail view: a group rail on the left, a detail pane on the right. The catalog has exactly **40 fields** in **6 groups** — Foundation, Ingestion, Retrieval, Rerank, Query Transform, Session — and exactly **21** of them are numeric (`FieldInt` or `FieldFloat`). Only fields you mark are written as sparse overrides; everything else keeps its global value. The **INDEX STALE** banner appears at the top when the loaded index was built with different index-affecting settings; press `r` (or `:reindex`) to rebuild in place.
 
+### Embedding models and reindexing
+
+The default local embedder is a pure-Go hashing model: it downloads nothing and works fully offline. Selecting the `rembed` neural embedder downloads its weights on first use and reuses the local cache afterwards. `rembed.Load` exposes no byte-level progress, so kbcli shows a phase-level spinner (`loading model` → `scanning` → `indexing` → `saving`) instead of a percentage bar. While a reindex or model load runs, a full-screen modal blocks chat input, and a second reindex cannot be started until the current one finishes.
+
 ## How it works
 
 `ingest` -> `chunk` -> `embed` -> `.kbvec` -> `retrieval` -> `agent` -> TUI. A directory is walked and split, each chunk is embedded into a 384-dimensional vector, and the whole index is written as one `.kbvec` file. At query time retrieval ranks evidence, the agent assembles an answer, and the TUI renders the chat and the evidence panes.

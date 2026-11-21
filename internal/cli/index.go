@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -12,6 +13,47 @@ import (
 	"github.com/ProjAnvil/kbcli/internal/config"
 	"github.com/ProjAnvil/kbcli/internal/scan"
 )
+
+var spinFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// progressPrinter writes short, overwritable phase lines shared by `index`
+// and `reindex`. The final summary lines stay with each command. rembed has
+// no byte-progress API, so loading_model is phase-level text only.
+type progressPrinter struct {
+	w     io.Writer
+	spin  int
+	shown bool
+}
+
+func newProgressPrinter(w io.Writer) *progressPrinter { return &progressPrinter{w: w} }
+
+func (p *progressPrinter) frame() string {
+	f := spinFrames[p.spin%len(spinFrames)]
+	p.spin++
+	return f
+}
+
+func (p *progressPrinter) on(pr app.Progress) {
+	switch pr.Phase {
+	case app.ProgressLoadingModel:
+		fmt.Fprintf(p.w, "\r%s loading embedding model (first use may download weights)", p.frame())
+	case app.ProgressScanning:
+		fmt.Fprintf(p.w, "\r%s scanning · %d files", p.frame(), pr.FilesTotal)
+	case app.ProgressIndexing:
+		fmt.Fprintf(p.w, "\r%s indexing %d/%d · %d chunks · %s", p.frame(), pr.FilesDone, pr.FilesTotal, pr.Chunks, pr.Current)
+	case app.ProgressSaving:
+		fmt.Fprintf(p.w, "\r%s saving %d chunks", p.frame(), pr.Chunks)
+	default:
+		return
+	}
+	p.shown = true
+}
+
+func (p *progressPrinter) finish() {
+	if p.shown {
+		fmt.Fprintln(p.w)
+	}
+}
 
 // newIndexCmd builds "kbcli index [dir]".
 func newIndexCmd(cfg *config.Config, g *globals) *cobra.Command {
@@ -93,19 +135,9 @@ func newIndexCmd(cfg *config.Config, g *globals) *cobra.Command {
 			}
 
 			start := time.Now()
-			frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-			spin := 0
-			n, err := a.BuildWithProgress(commandContext(cmd), root, indexPath, func(p app.Progress) {
-				if p.Phase != "indexing" {
-					return
-				}
-				fmt.Fprintf(w, "\r%s indexing %d/%d · %d chunks · %s",
-					frames[spin%len(frames)], p.FilesDone, p.FilesTotal, p.Chunks, p.Current)
-				spin++
-			})
-			if spin > 0 {
-				fmt.Fprintln(w)
-			}
+			printer := newProgressPrinter(w)
+			n, err := a.BuildWithProgress(commandContext(cmd), root, indexPath, printer.on)
+			printer.finish()
 			if err != nil {
 				return fmt.Errorf("build index: %w", err)
 			}
@@ -173,11 +205,13 @@ func newReindexCmd(cfg *config.Config, g *globals) *cobra.Command {
 			if out != "" {
 				outPath = app.ResolveIndexPath(root, out, cfg)
 			}
-			n, err := a.Build(commandContext(cmd), root, outPath)
+			w := cmd.OutOrStdout()
+			printer := newProgressPrinter(w)
+			n, err := a.BuildWithProgress(commandContext(cmd), root, outPath, printer.on)
+			printer.finish()
 			if err != nil {
 				return fmt.Errorf("reindex: %w", err)
 			}
-			w := cmd.OutOrStdout()
 			fmt.Fprintf(w, "chunks indexed: %d\n", n)
 			fmt.Fprintf(w, "index: %s\n", outPath)
 			return nil

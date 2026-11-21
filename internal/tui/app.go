@@ -121,6 +121,15 @@ type model struct {
 	// First-run index confirmation. It is only populated when the session
 	// starts without a vector file.
 	confirm confirmState
+
+	// Reindex modal. While reindexing is true every key except ctrl+c is
+	// ignored, so chat input is blocked and no second reindex can start.
+	reindexing      bool
+	reindexProgress IndexProgress
+	reindexFrame    int
+	reindexCh       chan IndexProgress
+	reindexFrom     screen
+	reindexErr      error
 }
 
 // run starts the bubbletea program and blocks until the user quits.
@@ -195,6 +204,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Reindex is modal on every screen. This must precede confirm/settings
+		// routing so no key (not even settings' r) can start a second build.
+		if m.reindexing {
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			return m, nil
+		}
 		// The confirmation and settings screens own every key while active.
 		// These must run before the chat switch so esc never quits the app.
 		if m.screen == screenConfirm {
@@ -245,10 +262,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case settingsSavedMsg:
 		return m, m.onSettingsSaved(msg)
 
-	case reindexResultMsg:
-		m.onReindexResult(msg)
-		return m, nil
-
 	case indexProgressMsg:
 		if m.screen == screenConfirm {
 			m.confirm.progress = msg.p
@@ -268,6 +281,26 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.onIndexDone(msg)
+
+	case reindexProgressMsg:
+		if !m.reindexing {
+			return m, nil
+		}
+		m.reindexProgress = msg.p
+		return m, m.waitReindexProgress()
+
+	case reindexSpinTickMsg:
+		if !m.reindexing {
+			return m, nil
+		}
+		m.reindexFrame++
+		return m, reindexSpinTick()
+
+	case reindexDoneMsg:
+		if !m.reindexing {
+			return m, nil
+		}
+		return m, m.onReindexDone(msg)
 	}
 
 	// Forward typing, cursor blinks and any other message to the chat text
@@ -302,6 +335,10 @@ func (m *model) submit() tea.Cmd {
 	// the confirmation screen's preflight state.
 	if settingsCommand(line) {
 		return m.openSettings()
+	}
+	if reindexCommand(line) {
+		m.appendChat("> "+line, lineStatus)
+		return m.startReindex(screenChat)
 	}
 	if ok, target := confirmTarget(line); ok {
 		root := m.opts.WorkspaceRoot
@@ -415,6 +452,39 @@ func (m *model) onCommandResult(msg commandResultMsg) {
 		m.opts.Store = store
 		m.opts.Runner = runner
 	}
+}
+
+// onReindexDone leaves the modal on either outcome, restores the originating
+// screen, rebinds the live store/runner and appends a status or error line.
+func (m *model) onReindexDone(msg reindexDoneMsg) tea.Cmd {
+	m.reindexing = false
+	m.screen = m.reindexFrom
+	if msg.err != nil {
+		m.reindexErr = msg.err
+		m.appendChat(m.lang.Tf("reindex.failed", msg.err), lineError)
+	} else {
+		m.reindexProgress = IndexProgress{Phase: "done", Chunks: msg.n}
+		m.appendChat(m.lang.Tf("reindex.done", msg.n), lineStatus)
+		// A successful rebuild clears the settings stale banner.
+		m.reindexRequired = false
+		m.reindexChanged = nil
+		m.info.IndexStale = false
+		m.info.StaleFields = nil
+	}
+	if m.opts.Refresh != nil {
+		store, runner := m.opts.Refresh()
+		m.opts.Store = store
+		m.opts.Runner = runner
+	}
+	return nil
+}
+
+// reindexCommand reports whether line is the chat :reindex / bare reindex
+// command. It is intercepted before generic command routing so the rebuild
+// runs through the blocking modal instead of opts.OnCommand.
+func reindexCommand(line string) bool {
+	l := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), ":")))
+	return l == "reindex"
 }
 
 // clearChat clears the visible transcript and evidence but keeps the
@@ -676,6 +746,9 @@ func (m *model) View() string {
 	}
 	if m.width < minWidth || m.height < minHeight {
 		return helpStyle.Render(m.lang.T("chat.terminal_small"))
+	}
+	if m.reindexing {
+		return m.reindexView()
 	}
 	if m.screen == screenSettings {
 		return m.settingsView()

@@ -259,9 +259,19 @@ func (a *App) Config() *config.Config {
 	return a.cfg
 }
 
+// Progress phase values. LoadingModel is emitted before the embedder is
+// created; with rembed this is where model weights are downloaded.
+const (
+	ProgressLoadingModel = "loading_model"
+	ProgressScanning     = "scanning"
+	ProgressIndexing     = "indexing"
+	ProgressSaving       = "saving"
+	ProgressDone         = "done"
+)
+
 // Progress is one indexing checkpoint. The TUI renders it under a spinner.
 type Progress struct {
-	Phase      string // scanning | indexing | saving | done
+	Phase      string // ProgressLoadingModel | ProgressScanning | ProgressIndexing | ProgressSaving | ProgressDone
 	FilesDone  int
 	FilesTotal int
 	Chunks     int
@@ -300,6 +310,10 @@ func (a *App) build(ctx context.Context, root, out string, on func(Progress)) (i
 		return 0, err
 	}
 	outPath := ResolveIndexPath(absRoot, out, a.cfg)
+	// Loading may block on a model download (rembed). Report the phase before
+	// it starts so the CLI/TUI can show a message; local hashing does not
+	// download anything and behaves exactly as before.
+	report(Progress{Phase: ProgressLoadingModel})
 	emb, err := a.ensureEmbedder()
 	if err != nil {
 		return 0, err
@@ -314,7 +328,7 @@ func (a *App) build(ctx context.Context, root, out string, on func(Progress)) (i
 	if err != nil {
 		return 0, fmt.Errorf("app: walk %s: %w", absRoot, err)
 	}
-	report(Progress{Phase: "scanning", FilesTotal: len(paths)})
+	report(Progress{Phase: ProgressScanning, FilesTotal: len(paths)})
 	store := index.New(emb, absRoot)
 	for i, p := range paths {
 		if err := ctx.Err(); err != nil {
@@ -329,7 +343,7 @@ func (a *App) build(ctx context.Context, root, out string, on func(Progress)) (i
 		}
 		store.SetSource(res.State)
 		report(Progress{
-			Phase:      "indexing",
+			Phase:      ProgressIndexing,
 			FilesDone:  i + 1,
 			FilesTotal: len(paths),
 			Chunks:     store.Len(),
@@ -339,7 +353,7 @@ func (a *App) build(ctx context.Context, root, out string, on func(Progress)) (i
 	// Record the effective index-affecting settings in the file header so a
 	// later session can detect a stale index.
 	store.SetBuildSignature(a.cfg.IndexSignature())
-	report(Progress{Phase: "saving", FilesDone: len(paths), FilesTotal: len(paths), Chunks: store.Len()})
+	report(Progress{Phase: ProgressSaving, FilesDone: len(paths), FilesTotal: len(paths), Chunks: store.Len()})
 	if err := store.Save(outPath); err != nil {
 		return 0, fmt.Errorf("app: save index: %w", err)
 	}
@@ -357,18 +371,24 @@ func (a *App) build(ctx context.Context, root, out string, on func(Progress)) (i
 	if err := a.install(absRoot, outPath, emb, store); err != nil {
 		return 0, err
 	}
-	report(Progress{Phase: "done", FilesDone: len(paths), FilesTotal: len(paths), Chunks: store.Len()})
+	report(Progress{Phase: ProgressDone, FilesDone: len(paths), FilesTotal: len(paths), Chunks: store.Len()})
 	return store.Len(), nil
 }
 
 // Reindex rebuilds the whole index from its recorded root.
 func (a *App) Reindex(ctx context.Context) (int, error) {
+	return a.ReindexWithProgress(ctx, nil)
+}
+
+// ReindexWithProgress is Reindex with the same progress stream as a first
+// build. A nil callback is allowed.
+func (a *App) ReindexWithProgress(ctx context.Context, on func(Progress)) (int, error) {
 	root := a.Root()
 	out := a.IndexPath()
 	if out == "" {
 		out = ResolveIndexPath(root, "", a.cfg)
 	}
-	return a.Build(ctx, root, out)
+	return a.BuildWithProgress(ctx, root, out, on)
 }
 
 // Update incrementally re-indexes target, which may be a directory or one
@@ -653,6 +673,17 @@ func (a *App) TUI() error {
 		RunIndex: func(root string, progress func(tui.IndexProgress)) (int, error) {
 			out := ResolveIndexPath(root, "", a.cfg)
 			return a.BuildWithProgress(context.Background(), root, out, func(p Progress) {
+				progress(tui.IndexProgress{
+					Phase:      p.Phase,
+					FilesDone:  p.FilesDone,
+					FilesTotal: p.FilesTotal,
+					Chunks:     p.Chunks,
+					Current:    p.Current,
+				})
+			})
+		},
+		ReindexWithProgress: func(progress func(tui.IndexProgress)) (int, error) {
+			return a.ReindexWithProgress(context.Background(), func(p Progress) {
 				progress(tui.IndexProgress{
 					Phase:      p.Phase,
 					FilesDone:  p.FilesDone,

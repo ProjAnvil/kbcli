@@ -140,6 +140,58 @@ func TestBuildThenSearch(t *testing.T) {
 	}
 }
 
+func TestBuildWithProgressPhaseOrder(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("KBCLI_INDEX", "")
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.md"), "# A\n\nalpha beta gamma\n")
+
+	a, err := Open(testConfig(t), root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var phases []string
+	if _, err := a.BuildWithProgress(context.Background(), root, "", func(p Progress) {
+		phases = append(phases, p.Phase)
+	}); err != nil {
+		t.Fatalf("BuildWithProgress: %v", err)
+	}
+	if len(phases) == 0 {
+		t.Fatal("no progress phases emitted")
+	}
+	if phases[0] != ProgressLoadingModel {
+		t.Fatalf("first phase = %q, want %q (phases: %v)", phases[0], ProgressLoadingModel, phases)
+	}
+	if phases[len(phases)-1] != ProgressDone {
+		t.Fatalf("last phase = %q, want %q (phases: %v)", phases[len(phases)-1], ProgressDone, phases)
+	}
+}
+
+func TestSaveSettingsQueryOnlyDoesNotRequireReindex(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("KBCLI_INDEX", "")
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a.md"), "# A\n\nalpha beta gamma\n")
+
+	cfg := testConfig(t)
+	a, err := Open(cfg, root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Build(context.Background(), root, ""); err != nil {
+		t.Fatal(err)
+	}
+	draft := a.cfg.Clone()
+	draft.TopK = 9
+	res, err := a.SaveSettings(draft, settings.ModeGlobal, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ReindexRequired || len(res.ChangedFields) != 0 {
+		t.Fatalf("query-only top_k change must not require reindex: %+v", res)
+	}
+}
+
 func TestUpdateIncremental(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("KBCLI_INDEX", "")

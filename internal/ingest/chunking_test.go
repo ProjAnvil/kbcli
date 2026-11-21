@@ -414,3 +414,108 @@ func TestIngestEmptyFile(t *testing.T) {
 		t.Fatal("empty file still needs a state hash")
 	}
 }
+
+// isHeadingOnlyBody reports whether b consists solely of one Markdown heading
+// line (after trimming), the evidence-free symptom of the splitter retaining
+// a heading as its own chunk.
+func isHeadingOnlyBody(b string) bool {
+	var lines []string
+	for _, line := range strings.Split(b, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			lines = append(lines, trimmed)
+		}
+	}
+	return len(lines) == 1 && strings.HasPrefix(lines[0], "#")
+}
+
+func TestIngestMarkdownLongSectionHasNoHeadingOnlyChunk(t *testing.T) {
+	dir := t.TempDir()
+	phrase := "alpha body phrase "
+	md := "# Alpha\n\n" + strings.Repeat(phrase, 150) + "\n"
+	p := writeFile(t, dir, "long.md", []byte(md))
+	res, err := ChunkFile(dir, p, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Chunks) == 0 {
+		t.Fatal("no chunks produced")
+	}
+	assertChunkInvariants(t, res.Chunks)
+	for i, c := range res.Chunks {
+		if strings.TrimSpace(c.Body) == "# Alpha" {
+			t.Errorf("chunk %d Body is just the heading %q", i, c.Body)
+		}
+		if isHeadingOnlyBody(c.Body) {
+			t.Errorf("chunk %d Body is heading-only: %q", i, c.Body)
+		}
+	}
+}
+
+func TestIngestMarkdownLongSectionBodyPreserved(t *testing.T) {
+	dir := t.TempDir()
+	phrase := "alpha body phrase "
+	md := "# Alpha\n\n" + strings.Repeat(phrase, 150) + "\n"
+	p := writeFile(t, dir, "long.md", []byte(md))
+	res, err := ChunkFile(dir, p, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var joined strings.Builder
+	for _, c := range res.Chunks {
+		joined.WriteString(c.Body)
+	}
+	body := joined.String()
+	if !strings.Contains(body, phrase) {
+		t.Error("body phrase missing from joined chunk bodies")
+	}
+	if len(body) == 0 {
+		t.Error("joined chunk bodies are empty")
+	}
+}
+
+func TestIngestMarkdownHeadingHierarchyPreservedAfterStrip(t *testing.T) {
+	dir := t.TempDir()
+	phrase := "some long body text "
+	md := "# Alpha\n\n" + strings.Repeat(phrase, 150) + "\n\n## Beta\n\n" + strings.Repeat(phrase, 150) + "\n"
+	p := writeFile(t, dir, "nested.md", []byte(md))
+	res, err := ChunkFile(dir, p, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertChunkInvariants(t, res.Chunks)
+	found := false
+	for _, c := range res.Chunks {
+		if c.Heading == "Alpha > Beta" {
+			found = true
+		}
+		if strings.Contains(c.Body, "# Alpha") || strings.Contains(c.Body, "## Beta") {
+			t.Errorf("Body contains a literal Markdown heading: %q", c.Body)
+		}
+	}
+	if !found {
+		t.Fatalf("no chunk carries heading %q: %+v", "Alpha > Beta", headingsOf(res.Chunks))
+	}
+}
+
+func TestIngestMarkdownShortBodyIncluded(t *testing.T) {
+	dir := t.TempDir()
+	p := writeFile(t, dir, "short.md", []byte("# Title\n\nHello world\n"))
+	res, err := ChunkFile(dir, p, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertChunkInvariants(t, res.Chunks)
+	if len(res.Chunks) != 1 {
+		t.Fatalf("chunks = %d, want 1", len(res.Chunks))
+	}
+	c := res.Chunks[0]
+	if c.Heading != "Title" {
+		t.Errorf("Heading = %q, want Title", c.Heading)
+	}
+	if !strings.Contains(c.Body, "Hello world") {
+		t.Errorf("Body %q missing Hello world", c.Body)
+	}
+	if strings.Contains(c.Body, "# Title") {
+		t.Errorf("Body %q contains literal heading", c.Body)
+	}
+}

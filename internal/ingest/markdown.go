@@ -10,9 +10,10 @@ import (
 )
 
 // chunkMarkdown splits Markdown with the remote langchain-golang splitters.
-// It header-splits first (keeping headings visible in evidence via
-// stripHeaders=false), then recursively splits any section longer than the
-// chunk size while keeping short sections intact.
+// It header-splits first with stripHeaders=true so headings stay in metadata
+// (and therefore Chunk.Heading) rather than in Chunk.Body, then recursively
+// splits any section longer than the chunk size while keeping short sections
+// intact.
 func chunkMarkdown(text string, meta chunkMeta, opts Options) ([]index.Chunk, error) {
 	size := chunkSize(opts)
 	headers := []textsplitters.Header{
@@ -21,7 +22,7 @@ func chunkMarkdown(text string, meta chunkMeta, opts Options) ([]index.Chunk, er
 		{Marker: "###", Name: "h3"},
 		{Marker: "####", Name: "h4"},
 	}
-	headerSplitter := textsplitters.NewMarkdownHeader(headers, false, false)
+	headerSplitter := textsplitters.NewMarkdownHeader(headers, false, true)
 
 	overlap := opts.ChunkOverlap
 	if overlap < 0 || overlap >= size {

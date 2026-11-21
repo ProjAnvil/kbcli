@@ -51,6 +51,11 @@ type IndexProgress struct {
 // progress callback must be non-blocking.
 type IndexFunc func(root string, progress func(IndexProgress)) (int, error)
 
+// ReindexFunc rebuilds the index for the current workspace. It runs inside a
+// tea.Cmd goroutine; the progress callback must be non-blocking. rembed
+// exposes no byte-level progress, so only phase-level checkpoints are emitted.
+type ReindexFunc func(progress func(IndexProgress)) (int, error)
+
 // PreflightFunc re-scans a directory when the user chooses a different root.
 type PreflightFunc func(root string) (scan.Report, error)
 
@@ -74,6 +79,9 @@ type Options struct {
 	IndexReport *scan.Report
 	Preflight   PreflightFunc
 	RunIndex    IndexFunc
+	// ReindexWithProgress rebuilds the live index and reports phase-level
+	// progress. While it runs the TUI is modal and chat input is blocked.
+	ReindexWithProgress ReindexFunc
 	// WorkspaceRoot is the directory the session was opened for. The :index
 	// command defaults to it, not to the process working directory.
 	WorkspaceRoot string

@@ -462,34 +462,42 @@ func TestSettingsReindexRequiredShowsStaleBanner(t *testing.T) {
 	}
 }
 
-func TestSettingsReindexAppendsToChat(t *testing.T) {
+func TestSettingsRStartsReindexModal(t *testing.T) {
 	opts, cap := settingsOpts()
+	stub := &reindexStub{chunks: 5}
+	opts.ReindexWithProgress = stub.run
 	m := settingsModel(t, opts)
+
 	got, cmd := pressKey(m, "r")
 	m = got.(*model)
+	if !m.reindexing {
+		t.Fatal("r did not start the reindex modal")
+	}
+	if m.reindexFrom != screenSettings {
+		t.Fatalf("reindexFrom = %v, want screenSettings", m.reindexFrom)
+	}
 	if cmd == nil {
 		t.Fatal("r did not return an async cmd")
 	}
-	res, ok := cmd().(reindexResultMsg)
+	if len(cap.onCommandCalled) != 0 {
+		t.Fatal("settings r must not be routed through OnCommand")
+	}
+
+	batch, ok := cmd().(tea.BatchMsg)
 	if !ok {
-		t.Fatal("r cmd did not yield reindexResultMsg")
+		t.Fatal("r cmd did not yield a tea.BatchMsg")
 	}
-	found := false
-	for _, l := range cap.onCommandCalled {
-		if l == "reindex" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("reindex was not routed through OnCommand")
-	}
-	final, _ := m.Update(res)
+	done := batch[len(batch)-1]()
+	final, _ := m.Update(done)
 	fm := final.(*model)
-	if !chatHas(fm, "ok: reindex") {
-		t.Fatal("reindex status was not appended to chat")
+	if fm.reindexing {
+		t.Fatal("modal was not cleared on reindex completion")
 	}
-	if fm.status == "" {
-		t.Fatal("reindex status was not shown in the settings status line")
+	if fm.screen != screenSettings {
+		t.Fatal("settings screen was not restored after reindex")
+	}
+	if !chatHas(fm, "Reindex done: 5 chunks") {
+		t.Fatal("reindex status was not appended to chat")
 	}
 }
 

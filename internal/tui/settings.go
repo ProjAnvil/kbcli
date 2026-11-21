@@ -80,7 +80,7 @@ func (m *model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "s":
 		return m, m.saveSettings()
 	case "r":
-		return m, reindexCmd(m.opts)
+		return m, m.startReindex(screenSettings)
 	case "m":
 		m.toggleMode()
 		return m, nil
@@ -152,7 +152,7 @@ func (m *model) updateSettingsNarrow(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "s":
 		return m, m.saveSettings()
 	case "r":
-		return m, reindexCmd(m.opts)
+		return m, m.startReindex(screenSettings)
 	}
 	return m, nil
 }
@@ -602,36 +602,6 @@ func (m *model) onSettingsSaved(msg settingsSavedMsg) tea.Cmd {
 	return settingsLoadCmd(m.opts, m.loadGen)
 }
 
-func (m *model) onReindexResult(msg reindexResultMsg) {
-	if msg.err != nil {
-		m.statusErr = msg.err
-		m.status = ""
-		m.appendChat(m.lang.Tf("chat.reindex_error", msg.err.Error()), lineError)
-		return
-	}
-	m.statusErr = nil
-	if msg.status != "" {
-		m.status = msg.status
-		m.appendChat(msg.status, lineStatus)
-	} else {
-		m.status = m.lang.T("settings.status_done")
-	}
-	// A successful reindex clears the stale banner.
-	m.reindexRequired = false
-	m.reindexChanged = nil
-	m.info.IndexStale = false
-	m.info.StaleFields = nil
-	if m.opts.Refresh != nil {
-		store, runner := m.opts.Refresh()
-		m.opts.Store = store
-		m.opts.Runner = runner
-	}
-}
-
-// settingsStale reports whether the stale banner should show and the field
-// names to list. reindexRequired is a local flag set after a save that demands
-// a rebuild, so the banner appears before the async reload completes and stays
-// until an actual reindex clears it.
 func (m *model) settingsStale() (bool, []string) {
 	if !m.info.IndexStale && !m.reindexRequired {
 		return false, nil

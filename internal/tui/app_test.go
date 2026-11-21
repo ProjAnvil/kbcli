@@ -138,7 +138,9 @@ func TestEnterEmptyInput(t *testing.T) {
 }
 
 func TestCommandRouting(t *testing.T) {
-	commands := []string{":reindex", ":update ./docs", ":help", ":clear", "reindex", "update", "help", "clear"}
+	// :reindex / reindex are intercepted into the modal flow and tested in
+	// reindex_progress_test.go; they never reach opts.OnCommand.
+	commands := []string{":update ./docs", ":help", ":clear", "update", "help", "clear"}
 	for _, line := range commands {
 		t.Run(line, func(t *testing.T) {
 			called := ""

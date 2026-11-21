@@ -44,14 +44,6 @@ type settingsSavedMsg struct {
 	err    error
 }
 
-// reindexResultMsg carries the status of a reindex triggered from the settings
-// screen. It is deliberately separate from commandResultMsg so the chat screen
-// command handler is never disturbed while settings are open.
-type reindexResultMsg struct {
-	status string
-	err    error
-}
-
 // errMsg wraps a standalone error that should be shown in the chat pane.
 type errMsg struct{ err error }
 
@@ -101,6 +93,68 @@ func (m *model) startIndex() tea.Cmd {
 				}
 			})
 			return indexDoneMsg{n: n, err: err}
+		},
+	)
+}
+
+// Reindex modal messages. A buffered channel carries phase-level progress out
+// of the reindex goroutine; a tick drives the spinner. The modal is closed by
+// reindexDoneMsg on both success and error so the UI can never get stuck.
+type reindexProgressMsg struct{ p IndexProgress }
+type reindexSpinTickMsg struct{}
+type reindexDoneMsg struct {
+	n   int
+	err error
+}
+
+func (m *model) waitReindexProgress() tea.Cmd {
+	ch := m.reindexCh
+	return func() tea.Msg {
+		p, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return reindexProgressMsg{p: p}
+	}
+}
+
+func reindexSpinTick() tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg {
+		return reindexSpinTickMsg{}
+	})
+}
+
+// startReindex switches the model into the modal reindex view immediately so
+// no subsequent key can launch a second build. from is the screen to restore
+// when the build finishes.
+func (m *model) startReindex(from screen) tea.Cmd {
+	if m.reindexing {
+		return nil
+	}
+	m.reindexing = true
+	m.reindexFrom = from
+	m.reindexErr = nil
+	m.reindexFrame = 0
+	m.reindexProgress = IndexProgress{Phase: "loading_model"}
+	if m.reindexCh == nil {
+		m.reindexCh = make(chan IndexProgress, 64)
+	}
+	ch := m.reindexCh
+	run := m.opts.ReindexWithProgress
+	return tea.Batch(
+		reindexSpinTick(),
+		m.waitReindexProgress(),
+		func() tea.Msg {
+			if run == nil {
+				return reindexDoneMsg{err: fmt.Errorf("tui: reindex unavailable")}
+			}
+			n, err := run(func(p IndexProgress) {
+				select {
+				case ch <- p:
+				default:
+				}
+			})
+			return reindexDoneMsg{n: n, err: err}
 		},
 	)
 }
@@ -180,20 +234,5 @@ func settingsSaveCmd(opts Options, draft *config.Config, mode string, overrides 
 			return settingsSavedMsg{result: result, err: fmt.Errorf("tui: save settings: %w", err)}
 		}
 		return settingsSavedMsg{result: result}
-	}
-}
-
-// reindexCmd runs a reindex from the settings screen and reports back through
-// reindexResultMsg, keeping the chat command handler untouched.
-func reindexCmd(opts Options) tea.Cmd {
-	return func() tea.Msg {
-		if opts.OnCommand == nil {
-			return reindexResultMsg{err: fmt.Errorf("tui: no command handler configured")}
-		}
-		status, err := opts.OnCommand("reindex")
-		if err != nil {
-			return reindexResultMsg{status: status, err: fmt.Errorf("tui: reindex: %w", err)}
-		}
-		return reindexResultMsg{status: status}
 	}
 }

@@ -58,6 +58,18 @@ var catalogEn = map[string]string{
 	"confirm.path_prompt":      "directory: ",
 	"confirm.path_hint":        "Enter a path (relative to the directory above), then press enter.",
 
+	"index.loading_model": "loading embedding model (first use may download weights)",
+
+	"reindex.title":               "kbcli · reindexing",
+	"reindex.progress":            "%s %s · %d/%d files · %d chunks · %s",
+	"reindex.done":                "Reindex done: %d chunks",
+	"reindex.failed":              "Reindex failed: %v",
+	"reindex.hint":                "wait for reindex to finish before chatting",
+	"reindex.phase_loading_model": "loading model",
+	"reindex.phase_scanning":      "scanning",
+	"reindex.phase_indexing":      "indexing",
+	"reindex.phase_saving":        "saving",
+
 	"settings.header":          "kbcli settings · %s",
 	"settings.mode":            "mode: %s",
 	"settings.mode_global":     "Global",

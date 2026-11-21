@@ -92,6 +92,9 @@ func TestReindexOut(t *testing.T) {
 	if !strings.Contains(out, "index: "+outFile) {
 		t.Fatalf("reindex summary is missing the out path: %s", out)
 	}
+	if !strings.Contains(out, "loading embedding model") && !strings.Contains(out, "indexing") {
+		t.Fatalf("reindex progress output missing: %s", out)
+	}
 }
 
 func TestIndexDryRunReportsWithoutWriting(t *testing.T) {

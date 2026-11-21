@@ -58,6 +58,18 @@ var catalogZh = map[string]string{
 	"confirm.path_prompt":      "目录：",
 	"confirm.path_hint":        "输入路径（相对上方目录），然后按回车。",
 
+	"index.loading_model": "正在加载 embedding 模型（首次使用可能下载权重）",
+
+	"reindex.title":               "kbcli · 正在重建索引",
+	"reindex.progress":            "%s %s · %d/%d 个文件 · %d 个分块 · %s",
+	"reindex.done":                "索引重建完成：%d 个分块",
+	"reindex.failed":              "索引重建失败：%v",
+	"reindex.hint":                "请等待重建完成后再对话",
+	"reindex.phase_loading_model": "加载模型",
+	"reindex.phase_scanning":      "扫描",
+	"reindex.phase_indexing":      "建索引",
+	"reindex.phase_saving":        "保存",
+
 	"settings.header":          "kbcli 设置 · %s",
 	"settings.mode":            "模式：%s",
 	"settings.mode_global":     "全局",

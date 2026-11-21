@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/ProjAnvil/kbcli/internal/i18n"
 	"github.com/ProjAnvil/kbcli/internal/scan"
 )
 
@@ -230,8 +231,13 @@ func (m *model) confirmView() string {
 	if m.confirm.indexing {
 		frame := spinnerFrames[m.confirm.frame%len(spinnerFrames)]
 		p := m.confirm.progress
-		b.WriteString(settingsStatusStyle.Render(m.lang.Tf("confirm.indexing",
-			frame, p.FilesDone, p.FilesTotal, p.Chunks, p.Current)))
+		if p.Phase == "loading_model" {
+			// Model loading has no byte/file progress to report.
+			b.WriteString(settingsStatusStyle.Render(frame + " " + m.lang.T("index.loading_model")))
+		} else {
+			b.WriteString(settingsStatusStyle.Render(m.lang.Tf("confirm.indexing",
+				frame, p.FilesDone, p.FilesTotal, p.Chunks, p.Current)))
+		}
 		b.WriteRune('\n')
 	} else if m.confirm.doneErr != nil {
 		b.WriteString(settingsErrorStyle.Render(m.lang.Tf("confirm.failed", m.confirm.doneErr)))
@@ -270,6 +276,38 @@ func (m *model) confirmView() string {
 	if !r.CanAutoIndex() {
 		b.WriteString(settingsStatusStyle.Render(m.lang.T("confirm.blocked")))
 	}
+	return b.String()
+}
+
+// reindexPhaseLabel maps an IndexProgress phase to a short localized label.
+func reindexPhaseLabel(lang i18n.Lang, phase string) string {
+	switch phase {
+	case "loading_model":
+		return lang.T("reindex.phase_loading_model")
+	case "scanning":
+		return lang.T("reindex.phase_scanning")
+	case "indexing":
+		return lang.T("reindex.phase_indexing")
+	case "saving":
+		return lang.T("reindex.phase_saving")
+	default:
+		return phase
+	}
+}
+
+// reindexView is the full-screen modal shown while a reindex (including
+// embedding-model loading) runs. Chat is blocked until reindexDoneMsg clears
+// it, and only phase-level progress is available from rembed.Load.
+func (m *model) reindexView() string {
+	p := m.reindexProgress
+	frame := spinnerFrames[m.reindexFrame%len(spinnerFrames)]
+	var b strings.Builder
+	b.WriteString(settingsHeaderStyle.Render(m.lang.T("reindex.title")))
+	b.WriteString("\n\n")
+	b.WriteString(settingsStatusStyle.Render(m.lang.Tf("reindex.progress",
+		frame, reindexPhaseLabel(m.lang, p.Phase), p.FilesDone, p.FilesTotal, p.Chunks, p.Current)))
+	b.WriteString("\n\n")
+	b.WriteString(helpStyle.Render(m.lang.T("reindex.hint")))
 	return b.String()
 }
 

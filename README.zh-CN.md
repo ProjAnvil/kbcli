@@ -106,6 +106,10 @@ kbcli settings set top_k 9     # 一个稀疏的工作区覆盖
 
 `:settings` 打开主从视图：左侧为分组栏，右侧为详情栏。目录恰好有 **40 个字段**、**6 组**——Foundation、Ingestion、Retrieval、Rerank、Query Transform、Session——其中恰好 **21** 个为数值型（`FieldInt` 或 `FieldFloat`）。只有你标记的字段会写成稀疏覆盖，其余字段保留全局值。当已加载索引的构建设置不同时，顶部显示 **INDEX STALE** 横幅。按 `r`（或 `:reindex`）就地重建。
 
+### 嵌入模型与重建索引
+
+默认的本地 embedder 是纯 Go 哈希模型：不下载任何内容，完全离线可用。选择 `rembed` 神经嵌入模型后，首次使用会下载权重，之后复用本地缓存。`rembed.Load` 不提供字节级进度，因此 kbcli 只显示阶段级 spinner（`加载模型` → `扫描` → `建索引` → `保存`），而不是百分比进度条。重建索引或加载模型期间，全屏模态会阻止聊天输入；当前重建完成前无法启动第二次重建。
+
 ## 工作原理
 
 `ingest` -> `chunk` -> `embed` -> `.kbvec` -> `retrieval` -> `agent` -> TUI。目录被遍历并切分，每个分块被嵌入为 384 维向量，整个索引写成一个 `.kbvec` 文件。查询时检索对证据排名，agent 组装答案，TUI 渲染聊天栏与证据栏。
