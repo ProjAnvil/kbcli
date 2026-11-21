@@ -60,8 +60,8 @@ var fieldCatalog = []Field{
 	{Key: "timeout_seconds", Label: "Timeout (s)", Group: groupFoundation, Kind: FieldInt, Min: 1, Max: 600, Step: 10},
 	{Key: "max_iterations", Label: "Max iterations", Group: groupFoundation, Kind: FieldInt, Min: 1, Max: 50, Step: 1},
 
-	{Key: "chunk_size", Label: "Chunk size", Group: groupIngestion, Kind: FieldInt, Min: 100, Max: 8000, Step: 100, IndexAffect: true, Help: "Rune limit per chunk. Changing this requires a re-index."},
-	{Key: "chunk_overlap", Label: "Chunk overlap", Group: groupIngestion, Kind: FieldInt, Min: 0, Max: 2000, Step: 20, IndexAffect: true, Help: "Only Markdown splitting consumes overlap. Changing this requires a re-index."},
+	{Key: "chunk_size", Label: "Chunk size", Group: groupIngestion, Kind: FieldInt, Min: 100, Max: 8000, Step: 100, IndexAffect: true, Help: "Rune limit per chunk (default 1024 is a general-purpose baseline). Changing this requires a re-index."},
+	{Key: "chunk_overlap", Label: "Chunk overlap", Group: groupIngestion, Kind: FieldInt, Min: 0, Max: 2000, Step: 20, IndexAffect: true, Help: "Rune overlap between chunks. Default 200 is a general-purpose baseline. Changing this requires a re-index."},
 
 	{Key: "top_k", Label: "Top K", Group: groupRetrieval, Kind: FieldInt, Min: 1, Max: 50, Step: 1, Help: "Final number of evidence passages."},
 	{Key: "retrieval_method", Label: "Retrieval", Group: groupRetrieval, Kind: FieldEnum, Options: []string{RetrievalVector, RetrievalBM25, RetrievalHybrid}, Help: "Porto: vector / BM25 / weighted RRF hybrid."},

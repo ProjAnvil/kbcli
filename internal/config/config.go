@@ -118,6 +118,12 @@ type Config struct {
 // Default returns the out-of-the-box configuration. All new optimization
 // switches default to the pre-existing behaviour (pure vector retrieval, no
 // rerank, no query transform), so an upgraded install changes nothing.
+//
+// ChunkSize=1024 runes with ChunkOverlap=200 is a general-purpose baseline,
+// not a universal optimum: the best values depend on the corpus, query type
+// and embedding model. kbcli's splitter counts runes, not tokens. Tune both
+// with retrieval evaluation on your own queries before changing them, and
+// re-index afterwards.
 func Default() *Config {
 	return &Config{
 		ChatProvider:             ChatProviderOpenAI,
@@ -128,8 +134,8 @@ func Default() *Config {
 		IndexFileName:            DefaultIndexFileName,
 		TimeoutSeconds:           120,
 		MaxIterations:            8,
-		ChunkSize:                600,
-		ChunkOverlap:             0,
+		ChunkSize:                1024,
+		ChunkOverlap:             200,
 		TopK:                     6,
 		RetrievalMethod:          RetrievalVector,
 		BM25TopK:                 20,
