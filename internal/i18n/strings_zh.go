@@ -10,7 +10,7 @@ var catalogZh = map[string]string{
 	"evidence.heading_separator": " · ",
 
 	"chat.welcome":             "kbcli 已就绪。输入问题，或用 :settings 配置、:help 查看命令。",
-	"chat.help":                "回车发送 · :settings / :reindex / :update / :help / :clear · tab 切换窗格 · pgup/pgdn 滚动 · ctrl+c 退出",
+	"chat.help":                "回车发送 · :settings / :reindex / :update / :help / :clear / :q · tab 切换窗格 · pgup/pgdn 滚动 · q 或 ctrl+c 退出",
 	"chat.thinking":            "  ⠋ 思考中...",
 	"chat.starting":            "kbcli — 启动中…",
 	"chat.terminal_small":      "终端太小 — 请调整到至少 40x10。",

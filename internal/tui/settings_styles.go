@@ -2,10 +2,10 @@ package tui
 
 import "github.com/charmbracelet/lipgloss"
 
-// Styles for the settings screen. They reuse the light palette defined in
-// styles.go: every surface is a light colour and every piece of text is dark,
-// so the screen matches the IDE light theme. lipgloss setters return fresh
-// values, so these are read-only and never mutated at render time.
+// Styles for the settings screen. They reuse the adaptive palette defined in
+// styles.go. Every colour resolves against the terminal background, so text
+// stays readable in both light and dark terminals. lipgloss setters return
+// fresh values, so these are read-only and never mutated at render time.
 var (
 	settingsHeaderStyle = lipgloss.NewStyle().
 				Foreground(colorAccent).
@@ -28,7 +28,7 @@ var (
 				Bold(true)
 
 	// settingsIdxStyle marks fields that invalidate the vector index. It uses
-	// the dark-blue user colour so the IDX tag is visually distinct.
+	// the user colour so the IDX tag is visually distinct on both themes.
 	settingsIdxStyle = lipgloss.NewStyle().
 				Foreground(colorUser).
 				Bold(true)
@@ -55,7 +55,7 @@ var (
 	settingsHelpStyle = lipgloss.NewStyle().
 				Foreground(colorMuted)
 
-	// Master-detail panes. The rail is a plain light surface; the active
+	// Master-detail panes. The rail uses the plain text colour; the active
 	// group and the breadcrumb use the accent colour for orientation.
 	settingsRailStyle = lipgloss.NewStyle().
 				Foreground(colorText)

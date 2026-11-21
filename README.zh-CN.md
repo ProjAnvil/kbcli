@@ -37,7 +37,7 @@
 - 两种 embedder，均为 384 维并做 L2 归一化：零依赖的进程内哈希模型（FNV-1a 词一元语法 + 字符 3-gram），以及可选的纯 Go `rembed` 神经模型。
 - OpenAI 兼容的 Chat Completions 后端（`base_url`、`model`、`api_key`）。后端不可达时，答案退化为依据排名最高证据生成的抽取式答案，并带 `[n]` 引用。
 - 源自 Porto 的检索：`vector` / `bm25` / 加权 RRF `hybrid`（k=60），`cross_encoder` 或 `llm` 重排，`hyde` / `multi_query` / `decomposition` / `step_back` 查询变换，指代消解 condense 门，以及 kbcli 自有的 `min_score` 与 `context_expand`。
-- 三个全屏视图，基于 `bubbletea` + `bubbles` + `lipgloss`，浅色主题：两栏聊天（左侧会话、右侧排名证据）、主从式设置界面（分组栏 + 详情栏）、索引确认对话框。
+- 三个全屏视图，基于 `bubbletea` + `bubbles` + `lipgloss`。主题跟随终端背景（OSC 11 或 `COLORFGBG`）：两栏聊天（左侧会话、右侧排名证据）、主从式设置界面（分组栏 + 详情栏）、索引确认对话框。
 - 双语界面与提示词，英文 / 简体中文，由 `language`（`en`|`zh`）选择。英文与原有界面逐字节一致。
 - 每工作区会话记忆：`~/.kbcli/sessions/<sha256(root)[:16]>.json`（模式 `0600`）。含 4 类事实（`user_decision`、`user_preference`、`project_context`、`open_question`）、Jaccard 去重、上限淘汰、历史压缩，每轮注入。
 - 设置目录恰好有 39 个字段，分 6 组（Foundation、Ingestion、Retrieval、Rerank、Query Transform、Session）。其中恰好 21 个是数值型（`FieldInt` 或 `FieldFloat`）。支持稀疏的工作区覆盖，INDEX STALE 横幅由 version-2 构建签名驱动。
@@ -80,7 +80,7 @@ kbcli config set api_key sk-...
 
 启动时不建索引。当前目录存在 `.kbvec` 时，聊天立即开始。否则聊天栏会提示输入 `:index <dir>`，或运行 `kbcli index <dir>`。启动时不做任何扫描，也不向上级目录查找。
 
-CLI 子命令：`index`、`reindex`、`update`、`config`、`settings`、`search`、`version`。TUI 内命令：`:reindex`、`:update`、`:settings`、`:stale`、`:clear`、`:help`、`:index`。
+CLI 子命令：`index`、`reindex`、`update`、`config`、`settings`、`search`、`version`。TUI 内命令：`:reindex`、`:update`、`:settings`、`:stale`、`:clear`、`:help`、`:index`、`:q`（输入行为空时也可按 `q`）。`q`、`esc`、`ctrl+c` 均可退出。
 
 ## 配置
 

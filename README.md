@@ -37,7 +37,7 @@ Schematic of the chat view (not a screenshot):
 - Two embedders, both 384-dimensional and L2-normalized: a zero-dependency in-process hashing model (FNV-1a word unigrams + character 3-grams) and an optional pure-Go `rembed` neural model.
 - OpenAI-compatible Chat Completions backend (`base_url`, `model`, `api_key`); when it is unreachable, answers degrade to a deterministic extractive answer from the top evidence with `[n]` citations.
 - Porto-derived retrieval: `vector` / `bm25` / weighted-RRF `hybrid` (k=60), `cross_encoder` or `llm` reranking, `hyde` / `multi_query` / `decomposition` / `step_back` query transforms, an anaphora condense gate, plus kbcli's own `min_score` and `context_expand`.
-- Three full-screen `bubbletea` + `bubbles` + `lipgloss` views on a light theme: a two-pane chat (conversation left, ranked evidence right), a master-detail settings screen (group rail + detail pane), and an index confirmation dialog.
+- Three full-screen `bubbletea` + `bubbles` + `lipgloss` views with a theme that follows the terminal background (OSC 11, or `COLORFGBG`): a two-pane chat (conversation left, ranked evidence right), a master-detail settings screen (group rail + detail pane), and an index confirmation dialog.
 - Bilingual English / Simplified Chinese UI and prompts, selected by `language` (`en`|`zh`); English is byte-for-byte the original UI.
 - Per-workspace session memory at `~/.kbcli/sessions/<sha256(root)[:16]>.json` (mode `0600`): 4 fact categories (`user_decision`, `user_preference`, `project_context`, `open_question`), Jaccard dedup, cap eviction, history compaction, injected every round.
 - A settings catalog of exactly 39 fields in 6 groups (Foundation, Ingestion, Retrieval, Rerank, Query Transform, Session), of which exactly 21 are numeric (`FieldInt` or `FieldFloat`), with sparse per-workspace overrides and an INDEX STALE banner driven by a version-2 build signature.
@@ -80,7 +80,7 @@ Inside the TUI, type `:index <dir>` to index a different directory (two-step con
 
 Startup never indexes. If `.kbvec` exists in the current directory, chat starts immediately; otherwise the chat pane shows a hint to type `:index <dir>` or run `kbcli index <dir>`. No scan and no parent-directory walk happen at startup.
 
-CLI subcommands: `index`, `reindex`, `update`, `config`, `settings`, `search`, `version`. In-TUI commands: `:reindex`, `:update`, `:settings`, `:stale`, `:clear`, `:help`, `:index`.
+CLI subcommands: `index`, `reindex`, `update`, `config`, `settings`, `search`, `version`. In-TUI commands: `:reindex`, `:update`, `:settings`, `:stale`, `:clear`, `:help`, `:index`, `:q` (also `q` on an empty input line). `q`, `esc` and `ctrl+c` also quit.
 
 ## Configuration
 

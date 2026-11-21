@@ -27,7 +27,7 @@ const (
 	// the help row. So viewport height = terminal height - reservedRows.
 	reservedRows = 5
 
-	helpLine      = "enter send · :settings / :reindex / :update / :help / :clear · tab switch · pgup/pgdn scroll · ctrl+c quit"
+	helpLine      = "enter send · :settings / :reindex / :update / :help / :clear / :q · tab switch · pgup/pgdn scroll · q or ctrl+c quit"
 	thinkingLabel = "  ⠋ thinking..."
 	emptyEvidence = "No evidence yet. Ask a question."
 	welcomeLine   = "kbcli ready. Ask a question, type :settings to configure, or :help for commands."
@@ -206,6 +206,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "esc":
 			return m, tea.Quit
+		case "q":
+			// Bare q quits only when the chat input is empty, so it never
+			// eats a letter the user is typing.
+			if strings.TrimSpace(m.input.Value()) == "" {
+				return m, tea.Quit
+			}
 		case "tab":
 			m.toggleFocus()
 			return m, nil
@@ -289,6 +295,9 @@ func (m *model) submit() tea.Cmd {
 	if line == "" {
 		return nil
 	}
+	if quitCommand(line) {
+		return tea.Quit
+	}
 	// Settings and :index are handled locally: app.HandleCommand does not own
 	// the confirmation screen's preflight state.
 	if settingsCommand(line) {
@@ -340,6 +349,11 @@ func isCommand(line string) bool {
 		return true
 	}
 	return false
+}
+
+func quitCommand(line string) bool {
+	l := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), ":")))
+	return l == "q" || l == "quit" || l == "exit"
 }
 
 func clearCommand(line string) bool {

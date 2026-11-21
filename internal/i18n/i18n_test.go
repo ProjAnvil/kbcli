@@ -75,7 +75,7 @@ func TestTAndTf(t *testing.T) {
 }
 
 func TestEnglishMatchesExistingUI(t *testing.T) {
-	if got := LangEn.T("chat.help"); got != "enter send · :settings / :reindex / :update / :help / :clear · tab switch · pgup/pgdn scroll · ctrl+c quit" {
+	if got := LangEn.T("chat.help"); got != "enter send · :settings / :reindex / :update / :help / :clear / :q · tab switch · pgup/pgdn scroll · q or ctrl+c quit" {
 		t.Fatalf("English help line drifted: %q", got)
 	}
 	if got := LangEn.T("settings.help"); got != catalogEn["settings.help"] {

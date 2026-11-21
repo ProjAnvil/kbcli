@@ -10,7 +10,7 @@ var catalogEn = map[string]string{
 	"evidence.heading_separator": " · ",
 
 	"chat.welcome":             "kbcli ready. Ask a question, type :settings to configure, or :help for commands.",
-	"chat.help":                "enter send · :settings / :reindex / :update / :help / :clear · tab switch · pgup/pgdn scroll · ctrl+c quit",
+	"chat.help":                "enter send · :settings / :reindex / :update / :help / :clear / :q · tab switch · pgup/pgdn scroll · q or ctrl+c quit",
 	"chat.thinking":            "  ⠋ thinking...",
 	"chat.starting":            "kbcli — starting…",
 	"chat.terminal_small":      "Terminal too small — please resize to at least 40x10.",

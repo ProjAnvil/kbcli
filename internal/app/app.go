@@ -676,7 +676,7 @@ func (a *App) HandleCommand(line string) (string, error) {
 	fields := strings.Fields(line)
 	switch strings.ToLower(fields[0]) {
 	case "help":
-		return "commands: :reindex | :update [path] | :settings | :stale | :clear | :help", nil
+		return "commands: :reindex | :update [path] | :settings | :stale | :clear | :q | :help", nil
 	case "clear":
 		return "", nil
 	case "settings", "config", "index":
