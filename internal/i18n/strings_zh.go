@@ -122,6 +122,7 @@ var catalogZh = map[string]string{
 	"field.api_key.label":                    "API 密钥",
 	"field.base_url.label":                   "接口地址",
 	"field.model.label":                      "对话模型",
+	"field.chat_provider.label":              "聊天协议",
 	"field.embedder.label":                   "向量模型",
 	"field.embed_model.label":                "嵌入模型",
 	"field.agent.label":                      "智能体",

@@ -35,12 +35,12 @@
 
 - 每个目录一个可携带的 `.kbvec`：magic 头 `KBCLI\x00`、gob 载荷、经 `os.Rename` 原子替换。旧版 `.kbcli.kbvec` 仍可加载。embedder 域隔离会拒绝加载由不同 embedder 构建的索引。
 - 两种 embedder，均为 384 维并做 L2 归一化：零依赖的进程内哈希模型（FNV-1a 词一元语法 + 字符 3-gram），以及可选的纯 Go `rembed` 神经模型。
-- OpenAI 兼容的 Chat Completions 后端（`base_url`、`model`、`api_key`）。后端不可达时，答案退化为依据排名最高证据生成的抽取式答案，并带 `[n]` 引用。
+- 支持 OpenAI 兼容 Chat Completions 与 Anthropic Messages API 两类聊天后端（`chat_provider`、`base_url`、`model`、`api_key`）。后端不可达时，答案退化为依据排名最高证据生成的抽取式答案，并带 `[n]` 引用。
 - 源自 Porto 的检索：`vector` / `bm25` / 加权 RRF `hybrid`（k=60），`cross_encoder` 或 `llm` 重排，`hyde` / `multi_query` / `decomposition` / `step_back` 查询变换，指代消解 condense 门，以及 kbcli 自有的 `min_score` 与 `context_expand`。
 - 三个全屏视图，基于 `bubbletea` + `bubbles` + `lipgloss`。主题跟随终端背景（OSC 11 或 `COLORFGBG`）：两栏聊天（左侧会话、右侧排名证据）、主从式设置界面（分组栏 + 详情栏）、索引确认对话框。
 - 双语界面与提示词，英文 / 简体中文，由 `language`（`en`|`zh`）选择。英文与原有界面逐字节一致。
 - 每工作区会话记忆：`~/.kbcli/sessions/<sha256(root)[:16]>.json`（模式 `0600`）。含 4 类事实（`user_decision`、`user_preference`、`project_context`、`open_question`）、Jaccard 去重、上限淘汰、历史压缩，每轮注入。
-- 设置目录恰好有 39 个字段，分 6 组（Foundation、Ingestion、Retrieval、Rerank、Query Transform、Session）。其中恰好 21 个是数值型（`FieldInt` 或 `FieldFloat`）。支持稀疏的工作区覆盖，INDEX STALE 横幅由 version-2 构建签名驱动。
+- 设置目录恰好有 40 个字段，分 6 组（Foundation、Ingestion、Retrieval、Rerank、Query Transform、Session）。其中恰好 21 个是数值型（`FieldInt` 或 `FieldFloat`）。支持稀疏的工作区覆盖，INDEX STALE 横幅由 version-2 构建签名驱动。
 
 ## 安装
 
@@ -87,7 +87,7 @@ CLI 子命令：`index`、`reindex`、`update`、`config`、`settings`、`search
 全局设置存放于 `~/.kbcli/config.yaml`（模式 `0600`）。工作区覆盖是稀疏的，存放于 `~/.kbcli/settings.json`：工作区继承 `config.yaml`，只覆盖你设定的键。
 
 ```sh
-kbcli config keys              # 全部 39 个键，含分组、类型与范围
+kbcli config keys              # 全部 40 个键，含分组、类型与范围
 kbcli config list              # 生效值，密钥已遮蔽
 kbcli config get top_k
 kbcli config set top_k 9
@@ -96,13 +96,15 @@ kbcli settings show            # 生效配置 + 索引状态
 kbcli settings set top_k 9     # 一个稀疏的工作区覆盖
 ```
 
+`chat_provider` 选择聊天 API 协议：`openai`（默认，OpenAI 兼容的 Chat Completions）或 `anthropic`（Anthropic Messages API）。`base_url` 必须指向与所选协议兼容的接口。使用 Anthropic 官方 API 时，请将 `base_url` 留空，或设为 `https://api.anthropic.com/v1`——agent 会自动回退到与协议匹配的默认地址（默认的 OpenAI `base_url` 仅适用于 `openai`）。
+
 [设置界面](#settings-screen)（`:settings`）在 TUI 中编辑同一份目录。修改会影响索引的键——`chunk_size`、`chunk_overlap`、`embedder`、`embed_model`——会记入 version-2 构建签名。加载时发现偏差会显示 **INDEX STALE** 横幅。运行 `:reindex`（或 `kbcli reindex`）重建索引。
 
 <a id="settings-screen"></a>
 
 ### 设置界面
 
-`:settings` 打开主从视图：左侧为分组栏，右侧为详情栏。目录恰好有 **39 个字段**、**6 组**——Foundation、Ingestion、Retrieval、Rerank、Query Transform、Session——其中恰好 **21** 个为数值型（`FieldInt` 或 `FieldFloat`）。只有你标记的字段会写成稀疏覆盖，其余字段保留全局值。当已加载索引的构建设置不同时，顶部显示 **INDEX STALE** 横幅。按 `r`（或 `:reindex`）就地重建。
+`:settings` 打开主从视图：左侧为分组栏，右侧为详情栏。目录恰好有 **40 个字段**、**6 组**——Foundation、Ingestion、Retrieval、Rerank、Query Transform、Session——其中恰好 **21** 个为数值型（`FieldInt` 或 `FieldFloat`）。只有你标记的字段会写成稀疏覆盖，其余字段保留全局值。当已加载索引的构建设置不同时，顶部显示 **INDEX STALE** 横幅。按 `r`（或 `:reindex`）就地重建。
 
 ## 工作原理
 

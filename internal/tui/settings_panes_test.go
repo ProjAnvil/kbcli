@@ -103,8 +103,14 @@ func TestCursorNeverCrossesGroupBoundary(t *testing.T) {
 	m := settingsModel(t, opts)
 	m.enterDetail()
 	start, end := m.groupBounds()
-	if start != 0 || end != 9 {
-		t.Fatalf("Foundation bounds = %d..%d", start, end)
+	wantEnd := 0
+	for _, f := range m.flat {
+		if f.Group == m.flat[0].Group {
+			wantEnd++
+		}
+	}
+	if start != 0 || end != wantEnd {
+		t.Fatalf("Foundation bounds = %d..%d, want 0..%d", start, end, wantEnd)
 	}
 	m.cursor = end - 1
 	got, _ := pressKey(m, "down")

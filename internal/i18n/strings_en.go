@@ -120,6 +120,7 @@ var catalogEn = map[string]string{
 	"field.api_key.label":                    "API key",
 	"field.base_url.label":                   "Base URL",
 	"field.model.label":                      "Chat model",
+	"field.chat_provider.label":              "Chat provider",
 	"field.embedder.label":                   "Embedder",
 	"field.embed_model.label":                "Embed model",
 	"field.agent.label":                      "Agent",

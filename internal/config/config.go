@@ -34,6 +34,12 @@ const (
 	AgentReact     = "react"
 	AgentDeep      = "deep"
 
+	ChatProviderOpenAI    = "openai"
+	ChatProviderAnthropic = "anthropic"
+
+	DefaultOpenAIBaseURL    = "https://api.openai.com/v1"
+	DefaultAnthropicBaseURL = "https://api.anthropic.com/v1"
+
 	RetrievalVector = "vector"
 	RetrievalBM25   = "bm25"
 	RetrievalHybrid = "hybrid"
@@ -59,6 +65,7 @@ type Config struct {
 	APIKey         string `yaml:"api_key" json:"api_key"`
 	BaseURL        string `yaml:"base_url" json:"base_url"`
 	Model          string `yaml:"model" json:"model"`
+	ChatProvider   string `yaml:"chat_provider" json:"chat_provider"`
 	Embedder       string `yaml:"embedder" json:"embedder"`       // (index)
 	EmbedModel     string `yaml:"embed_model" json:"embed_model"` // (index)
 	Agent          string `yaml:"agent" json:"agent"`
@@ -113,7 +120,8 @@ type Config struct {
 // rerank, no query transform), so an upgraded install changes nothing.
 func Default() *Config {
 	return &Config{
-		BaseURL:                  "https://api.openai.com/v1",
+		ChatProvider:             ChatProviderOpenAI,
+		BaseURL:                  DefaultOpenAIBaseURL,
 		Model:                    "gpt-4o-mini",
 		Embedder:                 ProviderLocal,
 		Agent:                    AgentReact,
@@ -314,6 +322,11 @@ func (c *Config) Save() error {
 // Zero values of the new numeric knobs are legal; Default supplies the normal
 // values when a field is absent from disk.
 func (c *Config) Validate() error {
+	switch c.ChatProvider {
+	case ChatProviderOpenAI, ChatProviderAnthropic:
+	default:
+		return fmt.Errorf("config: unsupported chat_provider %q (want %q or %q)", c.ChatProvider, ChatProviderOpenAI, ChatProviderAnthropic)
+	}
 	switch c.Embedder {
 	case ProviderLocal, ProviderRembed:
 	default:
@@ -444,6 +457,9 @@ func (c *Config) Normalize() {
 	if c.Language == "" {
 		c.Language = d.Language
 	}
+	if c.ChatProvider == "" {
+		c.ChatProvider = d.ChatProvider
+	}
 	if c.RetrievalMethod == "" {
 		c.RetrievalMethod = d.RetrievalMethod
 	}
@@ -463,6 +479,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Model == "" {
 		c.Model = d.Model
+	}
+	if c.ChatProvider == "" {
+		c.ChatProvider = d.ChatProvider
 	}
 	if c.Embedder == "" {
 		c.Embedder = d.Embedder

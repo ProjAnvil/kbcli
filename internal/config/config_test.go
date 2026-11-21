@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -71,6 +72,52 @@ func TestValidateRejectsBadSelectors(t *testing.T) {
 	}
 	if err := Default().Validate(); err != nil {
 		t.Fatalf("default config invalid: %v", err)
+	}
+}
+
+func TestChatProviderSelector(t *testing.T) {
+	d := Default()
+	if d.ChatProvider != ChatProviderOpenAI {
+		t.Fatalf("default chat_provider = %q, want %q", d.ChatProvider, ChatProviderOpenAI)
+	}
+	if d.BaseURL != DefaultOpenAIBaseURL {
+		t.Fatalf("default base_url = %q, want %q", d.BaseURL, DefaultOpenAIBaseURL)
+	}
+	for _, p := range []string{ChatProviderOpenAI, ChatProviderAnthropic} {
+		c := Default()
+		c.ChatProvider = p
+		if err := c.Validate(); err != nil {
+			t.Fatalf("Validate(%q): %v", p, err)
+		}
+	}
+	bad := Default()
+	bad.ChatProvider = "gemini"
+	err := bad.Validate()
+	if err == nil {
+		t.Fatal("Validate accepted an unknown chat_provider")
+	}
+	if !strings.Contains(err.Error(), ChatProviderOpenAI) || !strings.Contains(err.Error(), ChatProviderAnthropic) {
+		t.Fatalf("error must name both providers: %v", err)
+	}
+
+	empty := &Config{}
+	empty.applyDefaults()
+	if empty.ChatProvider != ChatProviderOpenAI {
+		t.Fatalf("applyDefaults chat_provider = %q", empty.ChatProvider)
+	}
+	empty = &Config{}
+	empty.Normalize()
+	if empty.ChatProvider != ChatProviderOpenAI {
+		t.Fatalf("Normalize chat_provider = %q", empty.ChatProvider)
+	}
+
+	before, after := Default(), Default()
+	after.ChatProvider = ChatProviderAnthropic
+	keys := append(append([]string{}, IndexAffectingKeys()...), IndexAffectingChanges(before, after)...)
+	for _, k := range keys {
+		if k == "chat_provider" {
+			t.Fatal("chat_provider must not be index affecting")
+		}
 	}
 }
 

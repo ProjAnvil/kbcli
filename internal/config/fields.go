@@ -50,8 +50,9 @@ const (
 
 var fieldCatalog = []Field{
 	{Key: "api_key", Label: "API key", Group: groupFoundation, Kind: FieldString, Secret: true, Help: "LLM API key. Never printed in full."},
-	{Key: "base_url", Label: "Base URL", Group: groupFoundation, Kind: FieldString, Help: "OpenAI-compatible chat completions endpoint."},
+	{Key: "base_url", Label: "Base URL", Group: groupFoundation, Kind: FieldString, Help: "Chat Completions or Anthropic Messages endpoint."},
 	{Key: "model", Label: "Chat model", Group: groupFoundation, Kind: FieldString, Help: "Model name sent to the endpoint."},
+	{Key: "chat_provider", Label: "Chat provider", Group: groupFoundation, Kind: FieldEnum, Options: []string{ChatProviderOpenAI, ChatProviderAnthropic}, Help: "Chat API protocol. OpenAI-compatible or Anthropic Messages."},
 	{Key: "embedder", Label: "Embedder", Group: groupFoundation, Kind: FieldEnum, Options: []string{ProviderLocal, ProviderRembed}, IndexAffect: true, Help: "Changing this requires a re-index."},
 	{Key: "embed_model", Label: "Embed model", Group: groupFoundation, Kind: FieldString, IndexAffect: true, Help: "Neural model reference. Changing this requires a re-index."},
 	{Key: "agent", Label: "Agent", Group: groupFoundation, Kind: FieldEnum, Options: []string{AgentReact, AgentDeep}},
@@ -144,6 +145,8 @@ func (c *Config) GetField(key string) (any, error) {
 		return c.BaseURL, nil
 	case "model":
 		return c.Model, nil
+	case "chat_provider":
+		return c.ChatProvider, nil
 	case "embedder":
 		return c.Embedder, nil
 	case "embed_model":
@@ -322,6 +325,8 @@ func (c *Config) setString(key, value string) error {
 		c.BaseURL = value
 	case "model":
 		c.Model = value
+	case "chat_provider":
+		c.ChatProvider = value
 	case "embedder":
 		c.Embedder = value
 	case "embed_model":

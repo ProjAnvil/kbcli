@@ -35,12 +35,12 @@ Schematic of the chat view (not a screenshot):
 
 - One portable `.kbvec` per directory: magic header `KBCLI\x00`, gob payload, atomic rename via `os.Rename`. Legacy `.kbcli.kbvec` still loads, and embedder-domain isolation refuses an index built by a different embedder.
 - Two embedders, both 384-dimensional and L2-normalized: a zero-dependency in-process hashing model (FNV-1a word unigrams + character 3-grams) and an optional pure-Go `rembed` neural model.
-- OpenAI-compatible Chat Completions backend (`base_url`, `model`, `api_key`); when it is unreachable, answers degrade to a deterministic extractive answer from the top evidence with `[n]` citations.
+- Chat backends for both OpenAI-compatible Chat Completions and the Anthropic Messages API (`chat_provider`, `base_url`, `model`, `api_key`); when the backend is unreachable, answers degrade to a deterministic extractive answer from the top evidence with `[n]` citations.
 - Porto-derived retrieval: `vector` / `bm25` / weighted-RRF `hybrid` (k=60), `cross_encoder` or `llm` reranking, `hyde` / `multi_query` / `decomposition` / `step_back` query transforms, an anaphora condense gate, plus kbcli's own `min_score` and `context_expand`.
 - Three full-screen `bubbletea` + `bubbles` + `lipgloss` views with a theme that follows the terminal background (OSC 11, or `COLORFGBG`): a two-pane chat (conversation left, ranked evidence right), a master-detail settings screen (group rail + detail pane), and an index confirmation dialog.
 - Bilingual English / Simplified Chinese UI and prompts, selected by `language` (`en`|`zh`); English is byte-for-byte the original UI.
 - Per-workspace session memory at `~/.kbcli/sessions/<sha256(root)[:16]>.json` (mode `0600`): 4 fact categories (`user_decision`, `user_preference`, `project_context`, `open_question`), Jaccard dedup, cap eviction, history compaction, injected every round.
-- A settings catalog of exactly 39 fields in 6 groups (Foundation, Ingestion, Retrieval, Rerank, Query Transform, Session), of which exactly 21 are numeric (`FieldInt` or `FieldFloat`), with sparse per-workspace overrides and an INDEX STALE banner driven by a version-2 build signature.
+- A settings catalog of exactly 40 fields in 6 groups (Foundation, Ingestion, Retrieval, Rerank, Query Transform, Session), of which exactly 21 are numeric (`FieldInt` or `FieldFloat`), with sparse per-workspace overrides and an INDEX STALE banner driven by a version-2 build signature.
 
 ## Install
 
@@ -87,7 +87,7 @@ CLI subcommands: `index`, `reindex`, `update`, `config`, `settings`, `search`, `
 Global settings live in `~/.kbcli/config.yaml` (mode `0600`). Per-workspace overrides are sparse and live in `~/.kbcli/settings.json`: a workspace inherits `config.yaml` and overrides only the keys you set.
 
 ```sh
-kbcli config keys              # all 39 keys with group, type and range
+kbcli config keys              # all 40 keys with group, type and range
 kbcli config list              # effective values, secrets masked
 kbcli config get top_k
 kbcli config set top_k 9
@@ -96,13 +96,15 @@ kbcli settings show            # effective config + index status
 kbcli settings set top_k 9     # one sparse workspace override
 ```
 
+`chat_provider` selects the chat API protocol: `openai` (default, OpenAI-compatible Chat Completions) or `anthropic` (Anthropic Messages API). `base_url` must point to an endpoint compatible with the chosen protocol. When using the official Anthropic API, leave `base_url` unset or set it to `https://api.anthropic.com/v1` — the agent automatically falls back to the protocol-appropriate default URL (the default OpenAI `base_url` is only correct for `openai`).
+
 The [settings screen](#settings-screen) (`:settings`) edits the same catalog in the TUI. Changing an index-affecting key — `chunk_size`, `chunk_overlap`, `embedder`, `embed_model` — is recorded in a version-2 build signature; on load, drift raises an **INDEX STALE** banner. Run `:reindex` (or `kbcli reindex`) to rebuild.
 
 <a id="settings-screen"></a>
 
 ### Settings screen
 
-`:settings` opens a master-detail view: a group rail on the left, a detail pane on the right. The catalog has exactly **39 fields** in **6 groups** — Foundation, Ingestion, Retrieval, Rerank, Query Transform, Session — and exactly **21** of them are numeric (`FieldInt` or `FieldFloat`). Only fields you mark are written as sparse overrides; everything else keeps its global value. The **INDEX STALE** banner appears at the top when the loaded index was built with different index-affecting settings; press `r` (or `:reindex`) to rebuild in place.
+`:settings` opens a master-detail view: a group rail on the left, a detail pane on the right. The catalog has exactly **40 fields** in **6 groups** — Foundation, Ingestion, Retrieval, Rerank, Query Transform, Session — and exactly **21** of them are numeric (`FieldInt` or `FieldFloat`). Only fields you mark are written as sparse overrides; everything else keeps its global value. The **INDEX STALE** banner appears at the top when the loaded index was built with different index-affecting settings; press `r` (or `:reindex`) to rebuild in place.
 
 ## How it works
 

@@ -107,7 +107,7 @@ func (m *model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveCursorInGroup(-1)
 	case "down", "j":
 		m.moveCursorInGroup(1)
-	// left/right stay the numeric nudge. 21 of the 39 fields are numeric, so
+	// left/right stay the numeric nudge. 21 of the 40 fields are numeric, so
 	// spending these keys on pane navigation would break the common action.
 	case "left", "h":
 		m.adjustField(-1)
