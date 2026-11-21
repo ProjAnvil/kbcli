@@ -1,0 +1,9 @@
+bin/
+*.kbvec
+*.kbvec.tmp-*
+.kbcli.kbvec
+coverage.out
+.DS_Store
+.workbuddy/
+*.o
+screencheck.o
