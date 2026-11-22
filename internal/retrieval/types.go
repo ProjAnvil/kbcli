@@ -36,6 +36,13 @@ type CondenseReporter interface {
 	LastCondense() CondenseMeta
 }
 
+// QuickRetriever is an optional Retriever extension for Porto's quick_rag
+// route. It skips condense and query transforms and searches the original
+// question verbatim. Retrievers without this method fall back to Search.
+type QuickRetriever interface {
+	SearchQuick(ctx context.Context, query string, k int) ([]index.Hit, error)
+}
+
 // Turn is one chat message used by the condense query transform.
 type Turn struct {
 	Role    string

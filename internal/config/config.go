@@ -37,6 +37,13 @@ const (
 	ChatProviderOpenAI    = "openai"
 	ChatProviderAnthropic = "anthropic"
 
+	// IntentProviderInherit reuses the global chat provider, model and key.
+	IntentProviderInherit = "inherit"
+
+	IntentOff      = "off"
+	IntentBinary   = "binary"
+	IntentAdaptive = "adaptive"
+
 	DefaultOpenAIBaseURL    = "https://api.openai.com/v1"
 	DefaultAnthropicBaseURL = "https://api.anthropic.com/v1"
 
@@ -46,6 +53,7 @@ const (
 
 	RerankCrossEncoder = "cross_encoder"
 	RerankLLM          = "llm"
+	RerankAikit        = "aikit"
 
 	TransformNone          = "none"
 	TransformHyDE          = "hyde"
@@ -91,17 +99,27 @@ type Config struct {
 	ContextMaxChunkChars int     `yaml:"context_max_chunk_chars" json:"context_max_chunk_chars"`
 
 	// Rerank settings. Ported from Porto's rerankers.py.
-	RerankEnabled bool   `yaml:"rerank_enabled" json:"rerank_enabled"`
-	RerankType    string `yaml:"rerank_type" json:"rerank_type"`
-	RerankTopN    int    `yaml:"rerank_top_n" json:"rerank_top_n"`
-	RerankBaseURL string `yaml:"rerank_base_url" json:"rerank_base_url"`
-	RerankModel   string `yaml:"rerank_model" json:"rerank_model"`
-	RerankAPIKey  string `yaml:"rerank_api_key" json:"rerank_api_key"`
+	RerankEnabled   bool   `yaml:"rerank_enabled" json:"rerank_enabled"`
+	RerankType      string `yaml:"rerank_type" json:"rerank_type"`
+	RerankTopN      int    `yaml:"rerank_top_n" json:"rerank_top_n"`
+	RerankBaseURL   string `yaml:"rerank_base_url" json:"rerank_base_url"`
+	RerankModel     string `yaml:"rerank_model" json:"rerank_model"`
+	RerankAPIKey    string `yaml:"rerank_api_key" json:"rerank_api_key"`
+	RerankModelPath string `yaml:"rerank_model_path" json:"rerank_model_path"`
 
 	// Query transform settings. Ported from Porto's query_transform.py.
 	QueryTransform  string `yaml:"query_transform" json:"query_transform"`
 	MultiQueryCount int    `yaml:"multi_query_count" json:"multi_query_count"`
 	CondenseEnabled bool   `yaml:"condense_enabled" json:"condense_enabled"`
+
+	// Intent routing settings. Ported from Porto's intent.py and enums.py.
+	// Empty intent_api_key, intent_base_url and intent_model inherit the
+	// global chat credentials, endpoint and model.
+	IntentMode     string `yaml:"intent_mode" json:"intent_mode"`
+	IntentProvider string `yaml:"intent_provider" json:"intent_provider"`
+	IntentAPIKey   string `yaml:"intent_api_key" json:"intent_api_key"`
+	IntentBaseURL  string `yaml:"intent_base_url" json:"intent_base_url"`
+	IntentModel    string `yaml:"intent_model" json:"intent_model"`
 
 	// Internationalization and session memory. Ported from Porto's
 	// memory/{facts,compaction,session_store}.py and orchestrator.py.
@@ -151,6 +169,8 @@ func Default() *Config {
 		QueryTransform:           TransformNone,
 		MultiQueryCount:          4,
 		CondenseEnabled:          true,
+		IntentMode:               IntentAdaptive,
+		IntentProvider:           IntentProviderInherit,
 		Language:                 LangEn,
 		SessionEnabled:           true,
 		FactsEnabled:             true,
@@ -347,14 +367,27 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("config: unsupported retrieval_method %q (want vector, bm25 or hybrid)", c.RetrievalMethod)
 	}
 	switch c.RerankType {
-	case RerankCrossEncoder, RerankLLM:
+	case RerankCrossEncoder, RerankLLM, RerankAikit:
 	default:
-		return fmt.Errorf("config: unsupported rerank_type %q (want cross_encoder or llm)", c.RerankType)
+		return fmt.Errorf("config: unsupported rerank_type %q (want cross_encoder, llm or aikit)", c.RerankType)
+	}
+	if c.RerankType == RerankAikit && strings.TrimSpace(c.RerankModelPath) == "" {
+		return fmt.Errorf("config: rerank_model_path is required when rerank_type is %q", RerankAikit)
 	}
 	switch c.QueryTransform {
 	case TransformNone, TransformHyDE, TransformMultiQuery, TransformDecomposition, TransformStepBack:
 	default:
 		return fmt.Errorf("config: unsupported query_transform %q", c.QueryTransform)
+	}
+	switch c.IntentMode {
+	case IntentOff, IntentBinary, IntentAdaptive:
+	default:
+		return fmt.Errorf("config: unsupported intent_mode %q (want off, binary or adaptive)", c.IntentMode)
+	}
+	switch c.IntentProvider {
+	case IntentProviderInherit, ChatProviderOpenAI, ChatProviderAnthropic:
+	default:
+		return fmt.Errorf("config: unsupported intent_provider %q (want inherit, openai or anthropic)", c.IntentProvider)
 	}
 	switch c.Language {
 	case LangEn, LangZh:
@@ -473,6 +506,12 @@ func (c *Config) Normalize() {
 	if c.QueryTransform == "" {
 		c.QueryTransform = d.QueryTransform
 	}
+	if c.IntentMode == "" {
+		c.IntentMode = d.IntentMode
+	}
+	if c.IntentProvider == "" {
+		c.IntentProvider = d.IntentProvider
+	}
 	c.applyDefaults()
 }
 
@@ -522,5 +561,11 @@ func (c *Config) applyDefaults() {
 	}
 	if c.CompactAfterTurns <= 0 {
 		c.CompactAfterTurns = d.CompactAfterTurns
+	}
+	if c.IntentMode == "" {
+		c.IntentMode = d.IntentMode
+	}
+	if c.IntentProvider == "" {
+		c.IntentProvider = d.IntentProvider
 	}
 }

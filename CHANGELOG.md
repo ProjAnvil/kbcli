@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Porto-derived intent router with `off`, `binary` and `adaptive` modes. The
+  `direct`, `quick_rag` and `deep_rag` routes select retrieval depth before
+  the agent runs. An unusable classifier falls back to keyword rules.
+- Five intent settings: `intent_mode`, `intent_provider`, `intent_api_key`,
+  `intent_base_url` and `intent_model`. All provider fields inherit global
+  settings by default. Classifier decisions appear as chat status lines.
+- Added local `aikit` cross-encoder reranking with `rerank_type: aikit` and
+  `rerank_model_path`. The in-process backend needs no HTTP service or Python.
+- `ctrl+]` toggles the evidence pane and gives the full terminal width to chat.
+
+### Fixed
+
+- Chat messages now wrap to the chat pane width. Long lines no longer
+  disappear beneath the evidence pane.
+
 ## [0.1.1] - 2026-11-22
 
 ### Changed

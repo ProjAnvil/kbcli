@@ -45,6 +45,40 @@ func TestChatBaseURL(t *testing.T) {
 	}
 }
 
+func TestIntentConfigInheritsGlobal(t *testing.T) {
+	cfg := config.Default()
+	cfg.APIKey = "global-key"
+	cfg.BaseURL = "https://gateway.example/v1"
+	cfg.Model = "global-model"
+	got := intentConfig(cfg)
+	if got.ChatProvider != cfg.ChatProvider || got.APIKey != cfg.APIKey ||
+		got.BaseURL != cfg.BaseURL || got.Model != cfg.Model {
+		t.Fatalf("inherited intent config = %+v", got)
+	}
+	cfg.Model = "changed-after-clone"
+	if got.Model != "global-model" {
+		t.Fatal("intentConfig must return an independent copy")
+	}
+}
+
+func TestIntentConfigOverrides(t *testing.T) {
+	cfg := config.Default()
+	cfg.APIKey = "global-key"
+	cfg.Model = "global-model"
+	cfg.IntentProvider = config.ChatProviderAnthropic
+	cfg.IntentAPIKey = "intent-key"
+	cfg.IntentBaseURL = "https://intent.example/v1"
+	cfg.IntentModel = "intent-model"
+	got := intentConfig(cfg)
+	if got.ChatProvider != config.ChatProviderAnthropic || got.APIKey != "intent-key" ||
+		got.BaseURL != "https://intent.example/v1" || got.Model != "intent-model" {
+		t.Fatalf("overridden intent config = %+v", got)
+	}
+	if cfg.Model != "global-model" || cfg.ChatProvider != config.ChatProviderOpenAI {
+		t.Fatal("intentConfig must not mutate the global config")
+	}
+}
+
 // TestBuildModelNonNilAndType builds both providers offline: construction
 // never dials the endpoint, so no network call is made. Concrete types differ,
 // so we assert the provider-specific type rather than only non-nil.

@@ -189,6 +189,54 @@ func TestPartialFileAppliesDefaults(t *testing.T) {
 	}
 }
 
+func TestAikitRerankConfig(t *testing.T) {
+	d := Default()
+	if d.RerankType != RerankCrossEncoder {
+		t.Fatalf("default rerank_type = %q, want %q", d.RerankType, RerankCrossEncoder)
+	}
+	if d.RerankModelPath != "" {
+		t.Fatalf("default rerank_model_path = %q, want empty", d.RerankModelPath)
+	}
+	if err := d.Validate(); err != nil {
+		t.Fatalf("default config invalid: %v", err)
+	}
+
+	valid := Default()
+	valid.RerankType = RerankAikit
+	valid.RerankModelPath = "/models/bge-reranker"
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("aikit with path rejected: %v", err)
+	}
+
+	blank := Default()
+	blank.RerankType = RerankAikit
+	if err := blank.Validate(); err == nil {
+		t.Fatal("aikit without path accepted")
+	} else if !strings.Contains(err.Error(), "rerank_model_path") {
+		t.Fatalf("error must name rerank_model_path: %v", err)
+	}
+}
+
+func TestRerankModelPathNotIndexAffecting(t *testing.T) {
+	for _, k := range IndexAffectingKeys() {
+		if k == "rerank_model_path" {
+			t.Fatal("rerank_model_path must not be index affecting")
+		}
+	}
+}
+
+func TestRerankModelPathFieldRoundTrip(t *testing.T) {
+	c := Default()
+	if err := c.SetField("rerank_model_path", "/models/bge-reranker"); err != nil {
+		t.Fatalf("SetField: %v", err)
+	}
+	if got, err := c.GetField("rerank_model_path"); err != nil {
+		t.Fatalf("GetField: %v", err)
+	} else if got != "/models/bge-reranker" {
+		t.Fatalf("round trip = %v, want path", got)
+	}
+}
+
 func mustDir(t *testing.T) string {
 	t.Helper()
 	d, err := Dir()

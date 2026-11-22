@@ -10,6 +10,7 @@ require (
 	github.com/projanvil/langchain-golang v0.14.1
 	github.com/rostamlabs/rembed v0.3.0
 	github.com/spf13/cobra v1.10.2
+	github.com/townsendmerino/aikit v1.78.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

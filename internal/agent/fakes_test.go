@@ -18,6 +18,7 @@ type fakeRetriever struct {
 	err  error
 
 	searchCalls      int
+	quickCalls       int
 	withHistoryCalls int
 	gotQuery         string
 	gotK             int
@@ -26,6 +27,12 @@ type fakeRetriever struct {
 
 func (f *fakeRetriever) Search(ctx context.Context, query string, k int) ([]index.Hit, error) {
 	f.searchCalls++
+	f.gotQuery, f.gotK = query, k
+	return f.hits, f.err
+}
+
+func (f *fakeRetriever) SearchQuick(ctx context.Context, query string, k int) ([]index.Hit, error) {
+	f.quickCalls++
 	f.gotQuery, f.gotK = query, k
 	return f.hits, f.err
 }

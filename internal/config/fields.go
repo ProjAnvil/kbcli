@@ -45,6 +45,7 @@ const (
 	groupRetrieval  = "Retrieval"
 	groupRerank     = "Rerank"
 	groupTransform  = "Query Transform"
+	groupIntent     = "Intent"
 	groupSession    = "Session"
 )
 
@@ -76,15 +77,22 @@ var fieldCatalog = []Field{
 	{Key: "context_max_chunk_chars", Label: "Per-chunk cap", Group: groupRetrieval, Kind: FieldInt, Min: 100, Max: 4000, Step: 100, Help: "Porto: per-citation character cap."},
 
 	{Key: "rerank_enabled", Label: "Rerank", Group: groupRerank, Kind: FieldBool, Help: "Porto: enable post-retrieval reranking."},
-	{Key: "rerank_type", Label: "Rerank backend", Group: groupRerank, Kind: FieldEnum, Options: []string{RerankCrossEncoder, RerankLLM}},
+	{Key: "rerank_type", Label: "Rerank backend", Group: groupRerank, Kind: FieldEnum, Options: []string{RerankCrossEncoder, RerankLLM, RerankAikit}},
 	{Key: "rerank_top_n", Label: "Rerank top N", Group: groupRerank, Kind: FieldInt, Min: 1, Max: 50, Step: 1},
 	{Key: "rerank_base_url", Label: "Rerank URL", Group: groupRerank, Kind: FieldString, Help: "Cross-encoder /rerank endpoint base URL."},
 	{Key: "rerank_model", Label: "Rerank model", Group: groupRerank, Kind: FieldString},
+	{Key: "rerank_model_path", Label: "Rerank model path", Group: groupRerank, Kind: FieldString, Help: "Local directory for the aikit cross-encoder."},
 	{Key: "rerank_api_key", Label: "Rerank key", Group: groupRerank, Kind: FieldString, Secret: true},
 
 	{Key: "query_transform", Label: "Query transform", Group: groupTransform, Kind: FieldEnum, Options: []string{TransformNone, TransformHyDE, TransformMultiQuery, TransformDecomposition, TransformStepBack}, Help: "Porto: HyDE / multi-query / decomposition / step-back. Needs an LLM."},
 	{Key: "multi_query_count", Label: "Query variants", Group: groupTransform, Kind: FieldInt, Min: 2, Max: 8, Step: 1},
 	{Key: "condense_enabled", Label: "Condense query", Group: groupTransform, Kind: FieldBool, Help: "Porto: resolve pronouns and ellipsis from recent history before retrieval."},
+
+	{Key: "intent_mode", Label: "Intent mode", Group: groupIntent, Kind: FieldEnum, Options: []string{IntentOff, IntentBinary, IntentAdaptive}, Help: "Porto: off / binary (direct|rag) / adaptive (direct|quick_rag|deep_rag)."},
+	{Key: "intent_provider", Label: "Intent provider", Group: groupIntent, Kind: FieldEnum, Options: []string{IntentProviderInherit, ChatProviderOpenAI, ChatProviderAnthropic}, Help: "inherit uses the global chat provider, endpoint, model and key."},
+	{Key: "intent_api_key", Label: "Intent key", Group: groupIntent, Kind: FieldString, Secret: true, Help: "Empty inherits the global API key."},
+	{Key: "intent_base_url", Label: "Intent URL", Group: groupIntent, Kind: FieldString, Help: "Empty inherits the global base URL, with the provider's default fallback."},
+	{Key: "intent_model", Label: "Intent model", Group: groupIntent, Kind: FieldString, Help: "Empty inherits the global chat model."},
 
 	{Key: "language", Label: "Language", Group: groupSession, Kind: FieldEnum, Options: []string{LangEn, LangZh}, Help: "TUI and prompt language. Query-time only."},
 	{Key: "session_enabled", Label: "Session memory", Group: groupSession, Kind: FieldBool, Help: "Porto: persist per-workspace turns, summary and facts across TUI runs."},
@@ -195,6 +203,8 @@ func (c *Config) GetField(key string) (any, error) {
 		return c.RerankBaseURL, nil
 	case "rerank_model":
 		return c.RerankModel, nil
+	case "rerank_model_path":
+		return c.RerankModelPath, nil
 	case "rerank_api_key":
 		return c.RerankAPIKey, nil
 	case "query_transform":
@@ -203,6 +213,16 @@ func (c *Config) GetField(key string) (any, error) {
 		return c.MultiQueryCount, nil
 	case "condense_enabled":
 		return c.CondenseEnabled, nil
+	case "intent_mode":
+		return c.IntentMode, nil
+	case "intent_provider":
+		return c.IntentProvider, nil
+	case "intent_api_key":
+		return c.IntentAPIKey, nil
+	case "intent_base_url":
+		return c.IntentBaseURL, nil
+	case "intent_model":
+		return c.IntentModel, nil
 	case "language":
 		return c.Language, nil
 	case "session_enabled":
@@ -343,10 +363,22 @@ func (c *Config) setString(key, value string) error {
 		c.RerankBaseURL = value
 	case "rerank_model":
 		c.RerankModel = value
+	case "rerank_model_path":
+		c.RerankModelPath = value
 	case "rerank_api_key":
 		c.RerankAPIKey = value
 	case "query_transform":
 		c.QueryTransform = value
+	case "intent_mode":
+		c.IntentMode = value
+	case "intent_provider":
+		c.IntentProvider = value
+	case "intent_api_key":
+		c.IntentAPIKey = value
+	case "intent_base_url":
+		c.IntentBaseURL = value
+	case "intent_model":
+		c.IntentModel = value
 	case "language":
 		c.Language = value
 	default:

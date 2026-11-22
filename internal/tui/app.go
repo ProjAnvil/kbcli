@@ -27,7 +27,7 @@ const (
 	// the help row. So viewport height = terminal height - reservedRows.
 	reservedRows = 5
 
-	helpLine      = "enter send · :settings / :reindex / :update / :help / :clear / :q · tab switch · pgup/pgdn scroll · q or ctrl+c quit"
+	helpLine      = "enter send · :settings / :reindex / :update / :help / :clear / :q · tab · ctrl+] evidence · pgup/pgdn · q/ctrl+c quit"
 	thinkingLabel = "  ⠋ thinking..."
 	emptyEvidence = "No evidence yet. Ask a question."
 	welcomeLine   = "kbcli ready. Ask a question, type :settings to configure, or :help for commands."
@@ -74,9 +74,10 @@ type model struct {
 	history   []agent.Turn
 	evidence  []index.Hit
 
-	busy  bool
-	focus focus
-	ready bool
+	busy              bool
+	focus             focus
+	ready             bool
+	evidenceCollapsed bool
 
 	width  int
 	height int
@@ -231,6 +232,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "tab":
 			m.toggleFocus()
+			return m, nil
+		case "ctrl+]":
+			m.toggleEvidence()
 			return m, nil
 		case "pgup", "pgdown", "up", "down":
 			m.scrollFocused(msg.String())
@@ -425,8 +429,12 @@ func (m *model) onAnswer(msg answerMsg) {
 		hits = m.opts.Sink.Get()
 	}
 	m.setEvidence(hits)
-	// Show Porto's anaphora rewrite and session memory as status lines so the
-	// optimizations are observable, not silent.
+	// Show Porto's intent route alongside the other optimizations so the
+	// routing decision is observable, not silent.
+	if msg.meta.Intent != "" && msg.meta.IntentEngine != "off" {
+		m.appendChat(m.lang.Tf("chat.intent",
+			msg.meta.Intent+"/"+msg.meta.IntentEngine, msg.meta.IntentReason), lineStatus)
+	}
 	if msg.meta.Condensed {
 		m.appendChat(m.lang.Tf("chat.condensed", msg.meta.Method, msg.meta.Original, msg.meta.Rewritten), lineStatus)
 	}
@@ -507,21 +515,48 @@ func (m *model) appendChat(text string, kind lineKind) {
 	m.refreshChat()
 }
 
+// refreshChat rebuilds the chat viewport content. Every line is wrapped to
+// the pane width before styling: the viewport truncates lines wider than its
+// Width, so without wrapping long answers disappear under the evidence pane.
 func (m *model) refreshChat() {
 	var b strings.Builder
-	for i, ln := range m.chatLines {
-		b.WriteString(styleLine(ln))
-		if i != len(m.chatLines)-1 {
+	first := true
+	write := func(s string) {
+		if !first {
 			b.WriteRune('\n')
+		}
+		b.WriteString(s)
+		first = false
+	}
+	for _, ln := range m.chatLines {
+		for _, wrapped := range wrapChatLine(ln, m.leftInner) {
+			write(wrapped)
 		}
 	}
 	if m.busy {
-		if b.Len() > 0 {
-			b.WriteRune('\n')
-		}
-		b.WriteString(thinkingStyle.Render(m.lang.T("chat.thinking")))
+		write(thinkingStyle.Render(m.lang.T("chat.thinking")))
 	}
 	m.chatVP.SetContent(b.String())
+}
+
+// wrapChatLine wraps plain text first, then styles each visual line. Styling
+// before wrapping would let the viewport truncate a line whose visible width
+// fits but whose ANSI escape sequences make it look longer.
+func wrapChatLine(ln chatLine, width int) []string {
+	if width <= 0 {
+		return []string{styleLine(ln)}
+	}
+	wrapped := lipgloss.NewStyle().Width(width).Render(ln.text)
+	parts := strings.Split(wrapped, "\n")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimRight(part, " ")
+		if part == "" {
+			part = " "
+		}
+		out = append(out, styleLine(chatLine{text: part, kind: ln.kind}))
+	}
+	return out
 }
 
 func styleLine(ln chatLine) string {
@@ -645,8 +680,10 @@ func (m *model) applySize(w, h int) {
 		return
 	}
 
-	leftBox := w * 62 / 100 // chat pane is ~62% of the terminal width
-	rightBox := w - leftBox
+	leftBox, rightBox := w*62/100, w*38/100 // chat pane is ~62% of the terminal width
+	if m.evidenceCollapsed {
+		leftBox, rightBox = w, 0
+	}
 	m.leftInner = leftBox - 2 // minus the left/right border columns
 	m.rightInner = rightBox - 2
 	if m.leftInner < 1 {
@@ -700,6 +737,18 @@ func (m *model) toggleFocus() {
 		m.focus = focusEvidence
 	} else {
 		m.focus = focusChat
+	}
+}
+
+// toggleEvidence collapses the evidence pane and gives the full width to the
+// chat pane. Focus moves back to chat, since the evidence pane is not visible.
+func (m *model) toggleEvidence() {
+	m.evidenceCollapsed = !m.evidenceCollapsed
+	if m.evidenceCollapsed && m.focus == focusEvidence {
+		m.focus = focusChat
+	}
+	if m.width > 0 && m.height > 0 {
+		m.applySize(m.width, m.height)
 	}
 }
 
@@ -758,10 +807,8 @@ func (m *model) View() string {
 	}
 
 	leftW := m.leftInner + 2
-	rightW := m.rightInner + 2
 	leftHeader := headerStyle.Width(leftW).Render(truncate(m.chatHeader(), leftW))
-	rightHeader := headerStyle.Width(rightW).Render(truncate(m.evidenceHeader(), rightW))
-	headerRow := lipgloss.JoinHorizontal(lipgloss.Top, leftHeader, rightHeader)
+	headerRow := leftHeader
 
 	leftPane, rightPane := paneStyle, paneStyle
 	if m.focus == focusChat {
@@ -770,8 +817,19 @@ func (m *model) View() string {
 		rightPane = paneFocusedStyle
 	}
 	leftBox := leftPane.Render(m.chatVP.View())
+	panesRow := leftBox
+
+	if m.evidenceCollapsed {
+		inputRow := inputStyle.Render(m.input.View())
+		helpRow := helpStyle.Render(truncate(m.lang.T("chat.help_collapsed"), m.width))
+		return lipgloss.JoinVertical(lipgloss.Left, headerRow, panesRow, inputRow, helpRow)
+	}
+
+	rightW := m.rightInner + 2
+	rightHeader := headerStyle.Width(rightW).Render(truncate(m.evidenceHeader(), rightW))
+	headerRow = lipgloss.JoinHorizontal(lipgloss.Top, leftHeader, rightHeader)
 	rightBox := rightPane.Render(m.evidenceVP.View())
-	panesRow := lipgloss.JoinHorizontal(lipgloss.Top, leftBox, rightBox)
+	panesRow = lipgloss.JoinHorizontal(lipgloss.Top, leftBox, rightBox)
 
 	inputRow := inputStyle.Render(m.input.View())
 	helpRow := helpStyle.Render(truncate(m.lang.T("chat.help"), m.width))

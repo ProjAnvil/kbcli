@@ -33,6 +33,9 @@ type Answerer interface {
 // status line so users can see whether anaphora resolution and session memory
 // actually ran.
 type AnswerMeta struct {
+	Intent       string
+	IntentReason string
+	IntentEngine string
 	Condensed    bool
 	Original     string
 	Rewritten    string

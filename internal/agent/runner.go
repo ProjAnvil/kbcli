@@ -11,6 +11,7 @@ import (
 	"github.com/ProjAnvil/kbcli/internal/config"
 	"github.com/ProjAnvil/kbcli/internal/i18n"
 	"github.com/ProjAnvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/intent"
 	"github.com/ProjAnvil/kbcli/internal/retrieval"
 	"github.com/ProjAnvil/kbcli/internal/session"
 	"github.com/projanvil/langchain-golang/core/messages"
@@ -33,12 +34,14 @@ type invoker interface {
 // runner orchestrates retrieval, the agent, session memory, and evidence
 // publication.
 type runner struct {
-	cfg       *config.Config
-	store     index.Store
-	retriever retrieval.Retriever
-	sink      Sink
-	agent     invoker
-	sess      *session.Store
+	cfg        *config.Config
+	store      index.Store
+	retriever  retrieval.Retriever
+	sink       Sink
+	agent      invoker
+	sess       *session.Store
+	classifier *intent.Classifier
+	complete   retrieval.CompleteFunc
 
 	metaMu sync.RWMutex
 	meta   AnswerMeta
@@ -91,13 +94,25 @@ func newRunner(cfg *config.Config, store index.Store, sink Sink, sess *session.S
 	if err != nil {
 		return nil, fmt.Errorf("agent: create %s agent: %w", cfg.Agent, err)
 	}
-	return &runner{cfg: cfg, store: store, retriever: ret, sink: sink, agent: ag, sess: sess}, nil
+	iCfg := intentConfig(cfg)
+	complete := newComplete(iCfg)
+	return &runner{
+		cfg:        cfg,
+		store:      store,
+		retriever:  ret,
+		sink:       sink,
+		agent:      ag,
+		sess:       sess,
+		classifier: intent.New(cfg, intent.CompleteFunc(complete)),
+		complete:   complete,
+	}, nil
 }
 
-// Ask retrieves evidence through the optimized pipeline, runs the agent, and
-// always returns the ranked hits. When retrieval, the LLM, or the answer fails
-// it falls back to a deterministic extractive answer so the TUI stays useful
-// offline. Errors are never surfaced.
+// Ask classifies the message, retrieves evidence through the selected route,
+// runs the agent, and returns the ranked hits. When the classifier, retrieval,
+// or the LLM fails it falls open to the original full-RAG path or to a
+// deterministic answer, so the TUI stays useful offline. Errors are never
+// surfaced.
 func (r *runner) Ask(ctx context.Context, history []Turn, question string) (string, []index.Hit, error) {
 	turns := make([]retrieval.Turn, 0, len(history))
 	for _, t := range history {
@@ -106,8 +121,37 @@ func (r *runner) Ask(ctx context.Context, history []Turn, question string) (stri
 
 	lang := i18n.Parse(r.cfg.Language)
 	meta := AnswerMeta{}
+	decision := intent.Decision{Intent: intent.RAG, Engine: intent.EngineOff, Reason: "disabled"}
+	if r.classifier != nil {
+		decision = r.classifier.Classify(ctx, question)
+	}
+	meta.Intent = decision.Intent
+	meta.IntentReason = decision.Reason
+	meta.IntentEngine = decision.Engine
+	r.trackUserTurn(question, &meta)
 
-	raw, err := r.retriever.SearchWithHistory(ctx, question, r.cfg.TopK, turns)
+	// Porto's direct route never touches the vector store. Answer with one
+	// short LLM call and publish empty evidence so a previous result clears.
+	if decision.Intent == intent.Direct {
+		hits := []index.Hit{}
+		r.sink.Set(hits)
+		r.setMeta(meta)
+		answer := r.answerDirect(ctx, question, lang)
+		r.recordAnswer(answer)
+		return answer, hits, nil
+	}
+
+	var raw []index.Hit
+	var err error
+	if decision.Intent == intent.QuickRAG {
+		if quick, ok := r.retriever.(retrieval.QuickRetriever); ok {
+			raw, err = quick.SearchQuick(ctx, question, r.cfg.TopK)
+		} else {
+			raw, err = r.retriever.Search(ctx, question, r.cfg.TopK)
+		}
+	} else {
+		raw, err = r.retriever.SearchWithHistory(ctx, question, r.cfg.TopK, turns)
+	}
 	hits := append([]index.Hit{}, raw...)
 	r.sink.Set(hits)
 
@@ -118,12 +162,6 @@ func (r *runner) Ask(ctx context.Context, history []Turn, question string) (stri
 		meta.Original = cm.Original
 		meta.Rewritten = cm.Rewritten
 		meta.Method = cm.Method
-	}
-	if r.sess != nil && r.cfg.SessionEnabled {
-		r.sess.AddTurn("user", question)
-		meta.FactsCount = len(r.sess.ActiveFacts())
-		meta.HasSummary = r.sess.Summary() != ""
-		go r.backgroundSession(question)
 	}
 	r.setMeta(meta)
 
@@ -136,7 +174,6 @@ func (r *runner) Ask(ctx context.Context, history []Turn, question string) (stri
 	// facts and summary are injected every round, exactly like Porto's
 	// orchestrator.py prompt_parts. The question is placed before the evidence
 	// so TrimToBudget always preserves it.
-	lang = i18n.Parse(r.cfg.Language)
 	sys := lang.T("prompt.system_en")
 	if lang == i18n.LangZh {
 		sys = lang.T("prompt.system_zh")
@@ -180,6 +217,37 @@ func (r *runner) Ask(ctx context.Context, history []Turn, question string) (stri
 	}
 	r.recordAnswer(answer)
 	return answer, hits, nil
+}
+
+// trackUserTurn records the user turn and captures session memory diagnostics
+// before the background extraction starts.
+func (r *runner) trackUserTurn(question string, meta *AnswerMeta) {
+	if r.sess == nil || !r.cfg.SessionEnabled {
+		return
+	}
+	r.sess.AddTurn("user", question)
+	meta.FactsCount = len(r.sess.ActiveFacts())
+	meta.HasSummary = r.sess.Summary() != ""
+	go r.backgroundSession(question)
+}
+
+// answerDirect answers a greeting or smalltalk message without retrieval. The
+// intent classifier's own provider serves this call; a failed call degrades to
+// a fixed greeting so the TUI never shows an error for a "hello".
+func (r *runner) answerDirect(ctx context.Context, question string, lang i18n.Lang) string {
+	key := "intent.direct_en"
+	fallback := "intent.fallback_en"
+	if lang == i18n.LangZh {
+		key, fallback = "intent.direct_zh", "intent.fallback_zh"
+	}
+	if r.complete == nil {
+		return lang.T(fallback)
+	}
+	answer, err := r.complete(ctx, lang.T(key), question)
+	if err != nil || strings.TrimSpace(answer) == "" {
+		return lang.T(fallback)
+	}
+	return strings.TrimSpace(answer)
 }
 
 // backgroundSession mirrors Porto's fire-and-forget fact extraction and

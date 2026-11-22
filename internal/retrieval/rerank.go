@@ -14,7 +14,20 @@ import (
 
 	"github.com/ProjAnvil/kbcli/internal/config"
 	"github.com/ProjAnvil/kbcli/internal/index"
+	"github.com/townsendmerino/aikit/encoder"
 )
+
+// aikitCrossEncoder is the small surface used by the local reranker. Keeping
+// it as an interface lets tests inject a fake instead of downloading a model.
+type aikitCrossEncoder interface {
+	ScoreBatch(query string, docs []string, concurrency int) ([]float32, error)
+	Close() error
+}
+
+// loadAikitCrossEncoder is replaceable in tests to avoid model downloads.
+var loadAikitCrossEncoder = func(dir string) (aikitCrossEncoder, error) {
+	return encoder.LoadCrossEncoder(dir)
+}
 
 // rerankHits applies Porto's post-retrieval reranker. Any external failure
 // returns the input hits unchanged with a nil error, so chat never breaks when
@@ -32,9 +45,12 @@ func rerankHits(
 
 	var out []index.Hit
 	var err error
-	if cfg.RerankType == config.RerankLLM {
+	switch cfg.RerankType {
+	case config.RerankLLM:
 		out, err = llmRerank(ctx, query, hits, complete)
-	} else {
+	case config.RerankAikit:
+		out, err = aikitRerank(ctx, query, hits, cfg)
+	default:
 		out, err = crossEncoderRerank(ctx, query, hits, cfg)
 	}
 	if err != nil || len(out) == 0 {
@@ -44,6 +60,53 @@ func rerankHits(
 		out = out[:cfg.RerankTopN]
 	}
 	rankHits(out)
+	return out, nil
+}
+
+// aikitRerank runs a locally loaded cross-encoder model from cfg.RerankModelPath.
+// The model directory must contain config.json, model.safetensors and tokenizer
+// files (for example cross-encoder/ms-marco-MiniLM-L-6-v2). Any failure is
+// returned so rerankHits fails open to the original hit order.
+func aikitRerank(ctx context.Context, query string, hits []index.Hit, cfg *config.Config) ([]index.Hit, error) {
+	path := strings.TrimSpace(cfg.RerankModelPath)
+	if path == "" {
+		return nil, fmt.Errorf("retrieval: rerank_model_path is empty for aikit rerank")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("retrieval: aikit rerank canceled: %w", err)
+	}
+
+	documents := make([]string, 0, len(hits))
+	for _, h := range hits {
+		text := h.Chunk.Body
+		if text == "" {
+			text = h.Chunk.Text
+		}
+		documents = append(documents, truncateRunes(text, 2000))
+	}
+
+	ce, err := loadAikitCrossEncoder(path)
+	if err != nil {
+		return nil, fmt.Errorf("retrieval: load aikit cross-encoder: %w", err)
+	}
+	defer func() { _ = ce.Close() }()
+
+	scores, err := ce.ScoreBatch(query, documents, 0)
+	if err != nil {
+		return nil, fmt.Errorf("retrieval: aikit score batch: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("retrieval: aikit rerank canceled: %w", err)
+	}
+	if len(scores) != len(hits) {
+		return nil, fmt.Errorf("retrieval: aikit returned %d scores for %d hits", len(scores), len(hits))
+	}
+
+	out := make([]index.Hit, len(hits))
+	copy(out, hits)
+	for i := range out {
+		out[i].Score = float64(scores[i])
+	}
 	return out, nil
 }
 

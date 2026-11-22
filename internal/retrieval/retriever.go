@@ -53,14 +53,20 @@ func (r *retriever) ensureBM25() *bm25Index {
 }
 
 func (r *retriever) Search(ctx context.Context, query string, k int) ([]index.Hit, error) {
-	return r.search(ctx, query, k, nil)
+	return r.search(ctx, query, k, nil, false)
+}
+
+// SearchQuick implements the quick_rag route: verbatim query, no condense and
+// no query transform. Scoring, reranking and context expansion still apply.
+func (r *retriever) SearchQuick(ctx context.Context, query string, k int) ([]index.Hit, error) {
+	return r.search(ctx, query, k, nil, true)
 }
 
 func (r *retriever) SearchWithHistory(ctx context.Context, query string, k int, history []Turn) ([]index.Hit, error) {
-	return r.search(ctx, query, k, history)
+	return r.search(ctx, query, k, history, false)
 }
 
-func (r *retriever) search(ctx context.Context, query string, k int, history []Turn) ([]index.Hit, error) {
+func (r *retriever) search(ctx context.Context, query string, k int, history []Turn, quick bool) ([]index.Hit, error) {
 	if k <= 0 {
 		k = r.cfg.TopK
 	}
@@ -100,14 +106,21 @@ func (r *retriever) search(ctx context.Context, query string, k int, history []T
 
 	// Porto condense gate: resolve pronouns and ellipsis before any retrieval.
 	// A nil LLM falls back to a rule-based anchor rewrite, so anaphora handling
-	// also works offline.
-	q, meta := resolveQuery(ctx, query, history, r.cfg, r.complete)
-	r.metaMu.Lock()
-	r.meta = meta
-	r.metaMu.Unlock()
+	// also works offline. The quick_rag route skips this gate entirely.
+	q := query
+	if !quick {
+		var meta CondenseMeta
+		q, meta = resolveQuery(ctx, query, history, r.cfg, r.complete)
+		r.metaMu.Lock()
+		r.meta = meta
+		r.metaMu.Unlock()
+	}
 
 	transformCfg := r.cfg.Clone()
 	transformCfg.CondenseEnabled = false
+	if quick {
+		transformCfg.QueryTransform = config.TransformNone
+	}
 	hits, err := transformedSearch(ctx, q, history, transformCfg, r.complete, rawSearch)
 	if err != nil || hits == nil {
 		hits, _ = rawSearch(ctx, q)

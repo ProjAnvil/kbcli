@@ -47,6 +47,27 @@ func buildModel(cfg *config.Config) language.ChatModel {
 	return openai.NewChatModel(opts...).WithChatCompletions()
 }
 
+// intentConfig resolves the intent classifier's provider. An explicit
+// intent_provider overrides the chat protocol; empty intent credentials and
+// model inherit the global values. An unset base URL keeps the OpenAI default,
+// which chatBaseURL redirects for the Anthropic protocol.
+func intentConfig(cfg *config.Config) *config.Config {
+	out := cfg.Clone()
+	if cfg.IntentProvider != "" && cfg.IntentProvider != config.IntentProviderInherit {
+		out.ChatProvider = cfg.IntentProvider
+	}
+	if cfg.IntentAPIKey != "" {
+		out.APIKey = cfg.IntentAPIKey
+	}
+	if cfg.IntentBaseURL != "" {
+		out.BaseURL = cfg.IntentBaseURL
+	}
+	if cfg.IntentModel != "" {
+		out.Model = cfg.IntentModel
+	}
+	return out
+}
+
 // NewCompletion exposes the same adapter to other layers. The CLI search
 // command uses it so retrieval_method, min_score and the other query-time
 // knobs apply outside the chat TUI too.
