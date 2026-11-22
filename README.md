@@ -6,9 +6,35 @@ This document is also available in Simplified Chinese: [README.zh-CN.md](README.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![Go 1.27.4](https://img.shields.io/badge/Go-1.27.4-00ADD8)](https://go.dev/)
 
-Chat with any local document directory from a single Go binary — no server, no vector database, no cloud account.
+Chat with any local document directory from a single ~26–30 MB Go binary — no server, no vector database, no cloud account, no daemon. Drop the binary on your `PATH`, run `kbcli`, and the TUI is already there: no config file to write by hand, no port to open, no web UI to host.
 
 `kbcli` turns one directory into one portable `.kbvec` vector file and opens a four-view terminal UI: a two-pane chat, a settings screen, an index confirmation dialog, and a first-run API key wizard. It is offline-first out of the box: the default embedder is a zero-dependency in-process hashing model, and when the chat backend is unreachable the answer falls back to a deterministic extractive answer with `[n]` citations. Indexing is always an explicit command; startup never scans or builds anything.
+
+## Lightweight by design
+
+- **One static binary, 26–30 MB.** Built with `CGO_ENABLED=0` and `-s -w`. The v0.3.0 normal tier is 26.3 MB (linux/arm64) to 30.3 MB (darwin/amd64). No runtime, no Python, no cgo, no container, no installer.
+- **The TUI is the whole product.** `kbcli` opens a two-pane chat with ranked evidence, `:settings` for all 49 settings, `:reindex`, multi-window tabs and a first-run setup wizard. Nothing else needs to be running. No browser, no localhost port, no separate front end.
+- **Two commands to a working answer.** `kbcli index ./docs` then `kbcli`. Indexing is always explicit; startup never scans, never walks parent directories and never builds anything behind your back.
+- **One `.kbvec` file per directory.** Copy the folder and the index travels with it. No database to provision, migrate, back up or keep alive.
+- **No downloads to get started.** The default embedder is a zero-dependency in-process hashing model with no weights. The local cross-encoder reranker is fetched once into `~/.kbcli/model` (shown in the TUI boot screen) or shipped inside the `full` archive (~92 MB) for air-gapped machines.
+- **No account required to try it.** The first-run API key wizard is skippable with `ctrl+s`. If the chat backend is unreachable, answers degrade to deterministic extractive evidence with `[n]` citations instead of failing.
+- **No YAML editing.** Every setting lives in the in-TUI `:settings` screen, with sparse per-workspace overrides. Works over SSH, in a tmux pane, and on an offline laptop.
+
+## Also from ProjAnvil
+
+`kbcli` is part of [ProjAnvil — Infrastructure for the Agent Era](https://projanvil.github.io): 14 public, MIT-licensed, Go-first repositories. Each layer does one job and works on its own; `kbcli` is the knowledge layer for your terminal.
+
+| Project | What it does |
+| --- | --- |
+| [langchain-golang](https://github.com/ProjAnvil/langchain-golang) | A community Go port of LangChain / LangGraph — the agent runtime `kbcli` is built on. |
+| [Porto](https://github.com/ProjAnvil/Porto) | Turns a PRD into grounded engineering specs; `kbcli`'s retrieval pipeline is derived from it. |
+| [Vectra](https://github.com/ProjAnvil/Vectra) | Embedded in-memory graph engine for Go, with optional server mode and MCP interfaces. |
+| [Corpit](https://github.com/ProjAnvil/Corpit) | One Go binary that creates and runs a virtual company of AI agents. |
+| [Knot](https://github.com/ProjAnvil/Knot) | API documentation hub with a built-in MCP server, readable by humans and agents. |
+| [WoCA](https://github.com/ProjAnvil/WoCA) | Single-binary coding agent harness with an explicit, inspectable agent graph. |
+| [MindForge](https://github.com/ProjAnvil/MindForge) · [SCV](https://github.com/ProjAnvil/SCV) · [LadyM](https://github.com/ProjAnvil/LadyM) · [Belt](https://github.com/ProjAnvil/Belt) · [Jiade](https://github.com/ProjAnvil/Jiade) · [Smelt](https://github.com/ProjAnvil/Smelt) · [Bossy](https://github.com/ProjAnvil/Bossy) · [claude-agent-sdk-golang](https://github.com/ProjAnvil/claude-agent-sdk-golang) | Skills, codebase knowledge, agent memory, scaffolding, verification, ChatBI and the Go SDK. |
+
+[Browse all repositories →](https://github.com/orgs/ProjAnvil/repositories) · [How the stack fits together →](https://projanvil.github.io/#architecture)
 
 Schematic of the chat view (not a screenshot):
 

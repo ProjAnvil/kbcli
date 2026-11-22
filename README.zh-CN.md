@@ -6,9 +6,35 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![Go 1.27.4](https://img.shields.io/badge/Go-1.27.4-00ADD8)](https://go.dev/)
 
-用一个 Go 二进制文件即可与本地文档目录对话——无服务端、无向量数据库、无云账号。
+用一个约 26–30 MB 的 Go 二进制文件即可与本地文档目录对话——无服务端、无向量数据库、无云账号、无常驻进程。把二进制放进 `PATH`，运行 `kbcli`，TUI 就直接打开了：不用手写配置文件、不用开端口、不用另起一个 Web 界面。
 
 `kbcli` 把一个目录变成一个可携带的 `.kbvec` 向量文件，并打开四视图终端界面：两栏聊天、设置界面、索引确认对话框，以及首次运行的 API key 向导。默认即可离线使用。默认 embedder 是零依赖的进程内哈希模型。聊天后端不可达时，答案会退化为带 `[n]` 引用的确定性抽取式答案。索引永远是显式命令。启动时不扫描、不建索引。
+
+## 轻到可以直接用
+
+- **一个静态二进制，26–30 MB。** 使用 `CGO_ENABLED=0` 与 `-s -w` 构建。v0.3.0 普通档体积为 26.3 MB（linux/arm64）～30.3 MB（darwin/amd64）。无运行时、无 Python、无 cgo、无容器、无安装器。
+- **TUI 就是整个产品。** 运行 `kbcli` 即可打开两栏聊天（左会话、右排名证据）、包含全部 49 个设置的 `:settings`、`:reindex`、多窗口标签栏，以及首次运行的设置向导。不需要再跑别的东西；无浏览器、无 localhost 端口、无独立前端。
+- **两条命令就能用。** `kbcli index ./docs`，然后 `kbcli`。索引永远是显式命令；启动时不扫描、不向上级目录查找、不在后台偷偷建索引。
+- **每个目录一个 `.kbvec` 文件。** 复制目录，索引跟着一起走。无需开通、迁移、备份或维护数据库。
+- **上手不需要下载任何东西。** 默认 embedder 是零依赖的进程内哈希模型，没有权重文件。本地 cross-encoder 重排模型只会拉取一次到 `~/.kbcli/model`（TUI 启动屏显示进度），或直接打包在 `full` 完整档（约 92 MB）里，供离线环境使用。
+- **试用不需要账号。** 首次运行的 API key 向导可以按 `ctrl+s` 跳过。聊天后端不可达时，答案会退化为带 `[n]` 引用的确定性抽取式证据，而不是报错。
+- **不用改 YAML。** 所有设置都在 TUI 的 `:settings` 里，工作区只保存稀疏覆盖。SSH 里、tmux 窗格里、断网的笔记本上都能用。
+
+## 来自 ProjAnvil 的其他项目
+
+`kbcli` 属于 [ProjAnvil — Infrastructure for the Agent Era](https://projanvil.github.io)：14 个公开、MIT 许可、以 Go 为主的仓库。每一层只做一件事，也能单独使用；`kbcli` 是终端里的知识层。
+
+| 项目 | 作用 |
+| --- | --- |
+| [langchain-golang](https://github.com/ProjAnvil/langchain-golang) | LangChain / LangGraph 的社区 Go 移植，`kbcli` 的 agent runtime 就建立在它之上。 |
+| [Porto](https://github.com/ProjAnvil/Porto) | 把 PRD 转成有依据的工程规格；`kbcli` 的检索管线源自它。 |
+| [Vectra](https://github.com/ProjAnvil/Vectra) | Go 的嵌入式内存图引擎，可选 server 模式与 MCP 接口。 |
+| [Corpit](https://github.com/ProjAnvil/Corpit) | 一个 Go 二进制即可创建并运行由 AI agent 组成的虚拟公司。 |
+| [Knot](https://github.com/ProjAnvil/Knot) | 内置 MCP server 的 API 文档中心，人和 agent 都能读。 |
+| [WoCA](https://github.com/ProjAnvil/WoCA) | 单一二进制的编码 agent harness，agent graph 显式可检查。 |
+| [MindForge](https://github.com/ProjAnvil/MindForge) · [SCV](https://github.com/ProjAnvil/SCV) · [LadyM](https://github.com/ProjAnvil/LadyM) · [Belt](https://github.com/ProjAnvil/Belt) · [Jiade](https://github.com/ProjAnvil/Jiade) · [Smelt](https://github.com/ProjAnvil/Smelt) · [Bossy](https://github.com/ProjAnvil/Bossy) · [claude-agent-sdk-golang](https://github.com/ProjAnvil/claude-agent-sdk-golang) | 技能、代码库知识、agent 记忆、脚手架、验证、ChatBI 与 Go SDK。 |
+
+[浏览全部仓库 →](https://github.com/orgs/ProjAnvil/repositories) · [了解整套架构 →](https://projanvil.github.io/#architecture)
 
 聊天视图示意图（这是示意图，不是截图）：
 
