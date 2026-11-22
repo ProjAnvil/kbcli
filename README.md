@@ -36,7 +36,7 @@ Schematic of the chat view (not a screenshot):
 - One portable `.kbvec` per directory: magic header `KBCLI\x00`, gob payload, atomic rename via `os.Rename`. Legacy `.kbcli.kbvec` still loads, and embedder-domain isolation refuses an index built by a different embedder.
 - Two embedders, both 384-dimensional and L2-normalized: a zero-dependency in-process hashing model (FNV-1a word unigrams + character 3-grams) and an optional pure-Go `rembed` neural model.
 - Chat backends for both OpenAI-compatible Chat Completions and the Anthropic Messages API (`chat_provider`, `base_url`, `model`, `api_key`); when the backend is unreachable, answers degrade to a deterministic extractive answer from the top evidence with `[n]` citations.
-- Porto-derived retrieval: `vector` / `bm25` / weighted-RRF `hybrid` (k=60), `cross_encoder`, `llm` or local `aikit` reranking, `hyde` / `multi_query` / `decomposition` / `step_back` query transforms, an anaphora condense gate, plus kbcli's own `min_score` and `context_expand`.
+- Porto-derived retrieval: `vector` / `bm25` / weighted-RRF `hybrid` (k=60), with **local `aikit` cross-encoder reranking on by default** (no service, no Python, no cgo); external HTTP `cross_encoder` and `llm` reranking remain configurable, as do `hyde` / `multi_query` / `decomposition` / `step_back` query transforms, an anaphora condense gate, and kbcli's own `min_score` and `context_expand`.
 - Porto-derived intent router: `direct` skips retrieval, `quick_rag` searches the original question, `deep_rag` runs the full pipeline. The intent provider inherits global settings by default.
 - Three full-screen `bubbletea` + `bubbles` + `lipgloss` views with a theme that follows the terminal background (OSC 11, or `COLORFGBG`): a two-pane chat (conversation left, ranked evidence right; `ctrl+]` collapses the evidence pane), a master-detail settings screen (group rail + detail pane), and an index confirmation dialog.
 - Bilingual English / Simplified Chinese UI and prompts, selected by `language` (`en`|`zh`); English is byte-for-byte the original UI.
@@ -53,6 +53,41 @@ make install    # go install ./cmd/kbcli
 ```
 
 No CGO, no Python, no server: the result is a single binary.
+
+### Prebuilt binaries
+
+Each GitHub release publishes two tiers of archives per platform. Asset names carry the OS and architecture; full-tier names also contain `full`.
+
+| Tier | Asset name | Contents |
+| --- | --- | --- |
+| Normal | `kbcli-<version>-<os>-<arch>` (`kbcli-<version>-windows-amd64.exe`) | Binary only; the rerank model downloads on first run. |
+| Full | `kbcli-full-<version>-<os>-<arch>.tar.gz` (`kbcli-full-<version>-windows-amd64.zip`) | Binary plus `model/ms-marco-MiniLM-L-6-v2/` with all five model files; fully offline. |
+
+Extract an archive and run the binary from the extracted directory (replace the example name with your version and platform):
+
+```sh
+tar -xzf kbcli-full-v0.1.2-darwin-arm64.tar.gz   # Windows: unzip kbcli-full-v0.1.2-windows-amd64.zip
+./kbcli
+```
+
+The full archive contains:
+
+```
+kbcli                                  # kbcli.exe on Windows
+model/ms-marco-MiniLM-L-6-v2/
+  config.json
+  model.safetensors
+  tokenizer.json
+  tokenizer_config.json
+  vocab.txt
+```
+
+On the first run of a full release, kbcli copies `model/` from the executable's directory into `~/.kbcli/model/` — no network access. Each release also uploads `checksums.txt`; verify a download with:
+
+```sh
+sha256sum -c checksums.txt --ignore-missing
+# macOS: shasum -a 256 -c checksums.txt --ignore-missing
+```
 
 ### Remote install
 
@@ -99,6 +134,8 @@ kbcli settings set top_k 9     # one sparse workspace override
 
 `chat_provider` selects the chat API protocol: `openai` (default, OpenAI-compatible Chat Completions) or `anthropic` (Anthropic Messages API). `base_url` must point to an endpoint compatible with the chosen protocol. When using the official Anthropic API, leave `base_url` unset or set it to `https://api.anthropic.com/v1` — the agent automatically falls back to the protocol-appropriate default URL (the default OpenAI `base_url` is only correct for `openai`).
 
+Reranking is **on by default**: `rerank_enabled: true`, `rerank_type: aikit`, and `rerank_model: ms-marco-MiniLM-L-6-v2`. With `rerank_model_path` empty, the model lives in the managed directory `~/.kbcli/model/ms-marco-MiniLM-L-6-v2/`. On the first run of a normal release, kbcli checks that directory; if the five model files are missing it downloads them (~92 MB) with a progress line before the TUI starts. Chat cannot begin until the download or copy completes. Set `rerank_model_path` to an existing local model directory to skip the download. See [Local cross-encoder reranking](#local-cross-encoder-reranking) for details and for the external HTTP and LLM options.
+
 `intent_mode` selects the router: `off`, `binary` (`direct` or `rag`), or `adaptive` (`direct`, `quick_rag`, `deep_rag`). The default is `adaptive`. A `direct` message skips retrieval and gets one short answer. A `quick_rag` message searches the original question without condense or query transforms. A `deep_rag` message runs the full pipeline.
 
 Configure the classifier with `intent_provider`, `intent_api_key`, `intent_base_url` and `intent_model`. The default `intent_provider: inherit` reuses the global chat provider, endpoint, model and key. Leave the three credential fields empty to inherit their global values. An unusable classifier falls back to keyword rules, then to the full RAG path.
@@ -113,31 +150,47 @@ Token-based splitters exist and use model-specific tokenizers; kbcli's rune sett
 
 ### Local cross-encoder reranking
 
-`rerank_type: aikit` runs a cross-encoder in-process through
+Reranking is **on by default**: `rerank_type: aikit` runs a cross-encoder
+in-process through
 [`github.com/townsendmerino/aikit`](https://github.com/townsendmerino/aikit)
-v1.78.0. It needs no HTTP service, Python, ONNX Runtime, or cgo. The API is
+v1.78.0. It needs no HTTP service, Python, ONNX Runtime, or cgo; the API is
 Experimental, so kbcli pins the dependency version.
 
-Download a reference model:
+**Managed model (default).** With `rerank_model_path` empty, kbcli uses
+`~/.kbcli/model/<rerank_model>` — by default
+`~/.kbcli/model/ms-marco-MiniLM-L-6-v2/`. On the first run of a normal release,
+kbcli checks for five files there; if any is missing it downloads them (~92 MB,
+Hugging Face revision `233902d25c440f23af6f7d6e94d2946bac0bee0a`) with a
+progress line before the TUI starts. Chat cannot begin until the download or
+copy finishes. A [full offline release](#prebuilt-binaries) ships the same five
+files, so its first run only copies them into the managed directory — no network.
 
-```sh
-huggingface-cli download cross-encoder/ms-marco-MiniLM-L-6-v2 \
-  config.json model.safetensors tokenizer.json tokenizer_config.json vocab.txt \
-  --local-dir ~/.cache/kbcli/rerank/ms-marco-MiniLM-L-6-v2
-```
-
-Configure it:
+**External local model.** Set `rerank_model_path` to a directory containing
+`config.json`, `model.safetensors`, and tokenizer files; kbcli treats it as
+externally managed and skips the download:
 
 ```sh
 kbcli config set rerank_enabled on
 kbcli config set rerank_type aikit
-kbcli config set rerank_model_path ~/.cache/kbcli/rerank/ms-marco-MiniLM-L-6-v2
+kbcli config set rerank_model_path /path/to/ms-marco-MiniLM-L-6-v2
 ```
 
-`rerank_model_path` is required for `aikit`. The directory must contain
-`config.json`, `model.safetensors`, and tokenizer files. This is a query-time
-setting and does not invalidate the vector index. Any load or scoring error
-fails open and keeps the original retrieval order.
+For a custom setup you can fetch the reference model yourself:
+
+```sh
+huggingface-cli download cross-encoder/ms-marco-MiniLM-L-6-v2 \
+  config.json model.safetensors tokenizer.json tokenizer_config.json vocab.txt \
+  --local-dir /tmp/ms-marco-MiniLM-L-6-v2
+```
+
+**Other rerankers.** `rerank_type: cross_encoder` uses an external HTTP
+cross-encoder via `rerank_base_url`, `rerank_model` and `rerank_api_key`;
+`rerank_type: llm` uses an LLM reranker. Both remain configurable and require
+you to run the corresponding service.
+
+All rerank settings are query-time only and never invalidate the `.kbvec`
+index. Any load or scoring error fails open and keeps the original retrieval
+order.
 
 Both `chunk_size` and `chunk_overlap` are index-affecting: changing either invalidates the `.kbvec` index and requires a reindex (`:reindex` / `kbcli reindex`). Let recall@k guide tuning.
 

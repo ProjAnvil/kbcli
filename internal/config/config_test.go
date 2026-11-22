@@ -191,8 +191,14 @@ func TestPartialFileAppliesDefaults(t *testing.T) {
 
 func TestAikitRerankConfig(t *testing.T) {
 	d := Default()
-	if d.RerankType != RerankCrossEncoder {
-		t.Fatalf("default rerank_type = %q, want %q", d.RerankType, RerankCrossEncoder)
+	if !d.RerankEnabled {
+		t.Fatal("default rerank_enabled must be true")
+	}
+	if d.RerankType != RerankAikit {
+		t.Fatalf("default rerank_type = %q, want %q", d.RerankType, RerankAikit)
+	}
+	if d.RerankModel != DefaultRerankModel {
+		t.Fatalf("default rerank_model = %q, want %q", d.RerankModel, DefaultRerankModel)
 	}
 	if d.RerankModelPath != "" {
 		t.Fatalf("default rerank_model_path = %q, want empty", d.RerankModelPath)
@@ -201,19 +207,50 @@ func TestAikitRerankConfig(t *testing.T) {
 		t.Fatalf("default config invalid: %v", err)
 	}
 
-	valid := Default()
-	valid.RerankType = RerankAikit
-	valid.RerankModelPath = "/models/bge-reranker"
-	if err := valid.Validate(); err != nil {
-		t.Fatalf("aikit with path rejected: %v", err)
+	// An empty path means a managed model directory and is valid for aikit.
+	emptyPath := Default()
+	emptyPath.RerankModelPath = ""
+	if err := emptyPath.Validate(); err != nil {
+		t.Fatalf("aikit with empty path rejected: %v", err)
 	}
+	custom := Default()
+	custom.RerankModelPath = "/models/bge-reranker"
+	if err := custom.Validate(); err != nil {
+		t.Fatalf("aikit with custom path rejected: %v", err)
+	}
+}
 
-	blank := Default()
-	blank.RerankType = RerankAikit
-	if err := blank.Validate(); err == nil {
-		t.Fatal("aikit without path accepted")
-	} else if !strings.Contains(err.Error(), "rerank_model_path") {
-		t.Fatalf("error must name rerank_model_path: %v", err)
+func TestRerankModelNormalization(t *testing.T) {
+	c := &Config{}
+	c.Normalize()
+	if c.RerankModel != DefaultRerankModel {
+		t.Fatalf("Normalize rerank_model = %q, want %q", c.RerankModel, DefaultRerankModel)
+	}
+	c = &Config{}
+	c.applyDefaults()
+	if c.RerankModel != DefaultRerankModel {
+		t.Fatalf("applyDefaults rerank_model = %q, want %q", c.RerankModel, DefaultRerankModel)
+	}
+	c = Default()
+	c.RerankModel = "custom-reranker"
+	c.Normalize()
+	if c.RerankModel != "custom-reranker" {
+		t.Fatalf("Normalize overwrote explicit rerank_model = %q", c.RerankModel)
+	}
+}
+
+func TestModelDirSanitization(t *testing.T) {
+	root := filepath.Join(mustDir(t), "model")
+	for _, tc := range []struct{ name, want string }{
+		{"", root},
+		{"   ", root},
+		{".", root},
+		{DefaultRerankModel, filepath.Join(root, DefaultRerankModel)},
+		{"  /models/nested/bge-reranker  ", filepath.Join(root, "bge-reranker")},
+	} {
+		if got := ModelDir(tc.name); got != tc.want {
+			t.Fatalf("ModelDir(%q) = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 

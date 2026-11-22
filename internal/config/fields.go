@@ -77,11 +77,11 @@ var fieldCatalog = []Field{
 	{Key: "context_max_chunk_chars", Label: "Per-chunk cap", Group: groupRetrieval, Kind: FieldInt, Min: 100, Max: 4000, Step: 100, Help: "Porto: per-citation character cap."},
 
 	{Key: "rerank_enabled", Label: "Rerank", Group: groupRerank, Kind: FieldBool, Help: "Porto: enable post-retrieval reranking."},
-	{Key: "rerank_type", Label: "Rerank backend", Group: groupRerank, Kind: FieldEnum, Options: []string{RerankCrossEncoder, RerankLLM, RerankAikit}},
+	{Key: "rerank_type", Label: "Rerank backend", Group: groupRerank, Kind: FieldEnum, Options: []string{RerankCrossEncoder, RerankLLM, RerankAikit}, Help: "Default: local aikit cross-encoder."},
 	{Key: "rerank_top_n", Label: "Rerank top N", Group: groupRerank, Kind: FieldInt, Min: 1, Max: 50, Step: 1},
 	{Key: "rerank_base_url", Label: "Rerank URL", Group: groupRerank, Kind: FieldString, Help: "Cross-encoder /rerank endpoint base URL."},
-	{Key: "rerank_model", Label: "Rerank model", Group: groupRerank, Kind: FieldString},
-	{Key: "rerank_model_path", Label: "Rerank model path", Group: groupRerank, Kind: FieldString, Help: "Local directory for the aikit cross-encoder."},
+	{Key: "rerank_model", Label: "Rerank model", Group: groupRerank, Kind: FieldString, Help: "Model name: HF leaf name or external HTTP model."},
+	{Key: "rerank_model_path", Label: "Rerank model path", Group: groupRerank, Kind: FieldString, Help: "Empty uses ~/.kbcli/model/<rerank_model>."},
 	{Key: "rerank_api_key", Label: "Rerank key", Group: groupRerank, Kind: FieldString, Secret: true},
 
 	{Key: "query_transform", Label: "Query transform", Group: groupTransform, Kind: FieldEnum, Options: []string{TransformNone, TransformHyDE, TransformMultiQuery, TransformDecomposition, TransformStepBack}, Help: "Porto: HyDE / multi-query / decomposition / step-back. Needs an LLM."},

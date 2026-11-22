@@ -382,6 +382,7 @@ func TestCrossEncoderRerank(t *testing.T) {
 
 	cfg := config.Default()
 	cfg.RerankEnabled = true
+	cfg.RerankType = config.RerankCrossEncoder
 	cfg.RerankBaseURL = srv.URL
 	cfg.RerankModel = "bge-reranker"
 	cfg.RerankAPIKey = "secret"

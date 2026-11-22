@@ -163,8 +163,8 @@ func TestAikitRerankFailsOpenOnLoadError(t *testing.T) {
 	assertAikitIDs(t, out, "a", "b", "c")
 }
 
-func TestAikitRerankFailsOpenOnEmptyPath(t *testing.T) {
-	fake := &fakeAikitCE{scores: []float32{1, 1, 1}}
+func TestAikitRerankUsesManagedModelDirOnEmptyPath(t *testing.T) {
+	fake := &fakeAikitCE{scores: []float32{0.9, 0.1, 0.5}}
 	installFakeAikit(t, fake, nil)
 	cfg := aikitConfig()
 	cfg.RerankModelPath = "  "
@@ -173,9 +173,30 @@ func TestAikitRerankFailsOpenOnEmptyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	want := config.ModelDir(cfg.RerankModel)
+	if fake.dir != want {
+		t.Fatalf("model dir = %q, want managed dir %q", fake.dir, want)
+	}
+	if fake.calls != 1 {
+		t.Fatalf("ScoreBatch calls = %d, want 1", fake.calls)
+	}
 	assertAikitIDs(t, out, "a", "b", "c")
-	if fake.calls != 0 {
-		t.Fatal("ScoreBatch must not run without a model path")
+	if diff := math.Abs(out[0].Score - 0.9); diff > 1e-6 {
+		t.Fatalf("score = %v, want 0.9", out[0].Score)
+	}
+}
+
+func TestAikitRerankUsesExplicitModelPath(t *testing.T) {
+	fake := &fakeAikitCE{scores: []float32{0.9, 0.1, 0.5}}
+	installFakeAikit(t, fake, nil)
+	cfg := aikitConfig()
+	cfg.RerankModelPath = "/custom/local/model"
+
+	if _, err := rerankHits(context.Background(), "q", aikitHits(), cfg, nil); err != nil {
+		t.Fatal(err)
+	}
+	if fake.dir != cfg.RerankModelPath {
+		t.Fatalf("model dir = %q, want explicit path %q", fake.dir, cfg.RerankModelPath)
 	}
 }
 

@@ -55,6 +55,10 @@ const (
 	RerankLLM          = "llm"
 	RerankAikit        = "aikit"
 
+	// DefaultRerankModel is the built-in cross-encoder model name used by the
+	// local aikit reranker when no model is configured.
+	DefaultRerankModel = "ms-marco-MiniLM-L-6-v2"
+
 	TransformNone          = "none"
 	TransformHyDE          = "hyde"
 	TransformMultiQuery    = "multi_query"
@@ -163,8 +167,9 @@ func Default() *Config {
 		ContextExpand:            0,
 		ContextCharBudget:        16000,
 		ContextMaxChunkChars:     800,
-		RerankEnabled:            false,
-		RerankType:               RerankCrossEncoder,
+		RerankEnabled:            true,
+		RerankType:               RerankAikit,
+		RerankModel:              DefaultRerankModel,
 		RerankTopN:               5,
 		QueryTransform:           TransformNone,
 		MultiQueryCount:          4,
@@ -263,6 +268,18 @@ func Dir() (string, error) {
 		return "", fmt.Errorf("config: resolve home directory: %w", err)
 	}
 	return filepath.Join(home, DirName), nil
+}
+
+// ModelDir returns the managed directory for a local reranker model. The name
+// is reduced to its leaf element so a configured value cannot navigate out of
+// the settings directory. An empty name yields the model root.
+func ModelDir(name string) string {
+	dir, _ := Dir()
+	base := filepath.Base(strings.TrimSpace(name))
+	if base == "" || base == "." {
+		return filepath.Join(dir, "model")
+	}
+	return filepath.Join(dir, "model", base)
 }
 
 // Path returns the absolute settings file path.
@@ -370,9 +387,6 @@ func (c *Config) Validate() error {
 	case RerankCrossEncoder, RerankLLM, RerankAikit:
 	default:
 		return fmt.Errorf("config: unsupported rerank_type %q (want cross_encoder, llm or aikit)", c.RerankType)
-	}
-	if c.RerankType == RerankAikit && strings.TrimSpace(c.RerankModelPath) == "" {
-		return fmt.Errorf("config: rerank_model_path is required when rerank_type is %q", RerankAikit)
 	}
 	switch c.QueryTransform {
 	case TransformNone, TransformHyDE, TransformMultiQuery, TransformDecomposition, TransformStepBack:
@@ -503,6 +517,9 @@ func (c *Config) Normalize() {
 	if c.RerankType == "" {
 		c.RerankType = d.RerankType
 	}
+	if c.RerankModel == "" {
+		c.RerankModel = d.RerankModel
+	}
 	if c.QueryTransform == "" {
 		c.QueryTransform = d.QueryTransform
 	}
@@ -522,6 +539,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Model == "" {
 		c.Model = d.Model
+	}
+	if c.RerankModel == "" {
+		c.RerankModel = d.RerankModel
 	}
 	if c.ChatProvider == "" {
 		c.ChatProvider = d.ChatProvider

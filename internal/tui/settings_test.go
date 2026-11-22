@@ -293,7 +293,10 @@ func TestSettingsEnterTogglesBoolAndCyclesEnum(t *testing.T) {
 	opts, _ := settingsOpts()
 	m := settingsModel(t, opts)
 
-	selectField(t, m, "rerank_enabled") // bool, default off
+	selectField(t, m, "rerank_enabled") // bool, default on
+	if err := m.draft.SetField("rerank_enabled", "off"); err != nil {
+		t.Fatal(err)
+	}
 	got, _ := pressKey(m, "enter")
 	m = got.(*model)
 	if v, _ := m.draft.GetField("rerank_enabled"); !v.(bool) {

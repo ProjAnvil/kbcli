@@ -204,7 +204,7 @@ func TestResolveWorkspaceModeAppliesSparseOverrides(t *testing.T) {
 	if resolved.ChunkSize != beforeChunkSize {
 		t.Fatalf("sparse override changed an unrelated field: chunk_size %d -> %d", beforeChunkSize, resolved.ChunkSize)
 	}
-	if global.TopK != 6 || global.RerankEnabled || global.RetrievalMethod != "vector" {
+	if global.TopK != 6 || !global.RerankEnabled || global.RetrievalMethod != "vector" {
 		t.Fatal("Resolve mutated the caller's global config")
 	}
 }

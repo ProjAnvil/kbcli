@@ -18,6 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added local `aikit` cross-encoder reranking with `rerank_type: aikit` and
   `rerank_model_path`. The in-process backend needs no HTTP service or Python.
 - `ctrl+]` toggles the evidence pane and gives the full terminal width to chat.
+- Full offline release archives whose names contain `full`: the binary plus
+  `model/ms-marco-MiniLM-L-6-v2/` with all five model files. The first run
+  copies them into `~/.kbcli/model/` with no network access. Each release also
+  uploads `checksums.txt`.
+
+### Changed
+
+- Reranking is now on by default with the local `aikit` cross-encoder
+  (`rerank_enabled: true`, `rerank_type: aikit`, `rerank_model: ms-marco-MiniLM-L-6-v2`).
+  The first run downloads the five model files (~92 MB) with a progress line
+  before the TUI starts; setting `rerank_model_path` uses an external local
+  model and skips the download.
 
 ### Fixed
 

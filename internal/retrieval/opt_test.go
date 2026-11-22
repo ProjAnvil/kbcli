@@ -292,6 +292,7 @@ func TestOptCrossEncoderTopNTruncatesAndRanks(t *testing.T) {
 	defer srv.Close()
 	cfg := config.Default()
 	cfg.RerankEnabled = true
+	cfg.RerankType = config.RerankCrossEncoder
 	cfg.RerankBaseURL = srv.URL
 	cfg.RerankTopN = 2
 	out, err := rerankHits(context.Background(), "q", optHits("a", "b", "c"), cfg, nil)

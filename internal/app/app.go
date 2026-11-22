@@ -20,12 +20,17 @@ import (
 	"github.com/ProjAnvil/kbcli/internal/i18n"
 	"github.com/ProjAnvil/kbcli/internal/index"
 	"github.com/ProjAnvil/kbcli/internal/ingest"
+	"github.com/ProjAnvil/kbcli/internal/rerankmodel"
 	"github.com/ProjAnvil/kbcli/internal/retrieval"
 	"github.com/ProjAnvil/kbcli/internal/scan"
 	"github.com/ProjAnvil/kbcli/internal/session"
 	"github.com/ProjAnvil/kbcli/internal/settings"
 	"github.com/ProjAnvil/kbcli/internal/tui"
 )
+
+// ensureRerankModel is the download/copy hook. It is a package variable so
+// tests can inject a fake without touching the network.
+var ensureRerankModel = rerankmodel.Ensure
 
 // App holds the state of one kbcli session.
 //
@@ -145,6 +150,18 @@ func (a *App) Session() *session.Store {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.sess
+}
+
+// EnsureRerankModel provisions the managed cross-encoder model when aikit
+// reranking is enabled without an explicit model path. It reports whether any
+// work was done. The CLI calls it synchronously before starting the TUI, so
+// chat input cannot open until the model is present.
+func (a *App) EnsureRerankModel(ctx context.Context, onProgress func(rerankmodel.Progress)) (bool, error) {
+	cfg := a.cfg
+	if cfg == nil || !cfg.RerankEnabled || cfg.RerankType != config.RerankAikit || strings.TrimSpace(cfg.RerankModelPath) != "" {
+		return false, nil
+	}
+	return ensureRerankModel(ctx, cfg.RerankModel, config.ModelDir(cfg.RerankModel), onProgress)
 }
 
 // IndexRoot reads the source directory recorded in a vector file header

@@ -63,14 +63,16 @@ func rerankHits(
 	return out, nil
 }
 
-// aikitRerank runs a locally loaded cross-encoder model from cfg.RerankModelPath.
-// The model directory must contain config.json, model.safetensors and tokenizer
-// files (for example cross-encoder/ms-marco-MiniLM-L-6-v2). Any failure is
-// returned so rerankHits fails open to the original hit order.
+// aikitRerank runs a locally loaded cross-encoder model. An explicit
+// cfg.RerankModelPath overrides the managed directory resolved from
+// cfg.RerankModel; the model directory must contain config.json,
+// model.safetensors and tokenizer files (for example
+// cross-encoder/ms-marco-MiniLM-L-6-v2). Any failure is returned so
+// rerankHits fails open to the original hit order.
 func aikitRerank(ctx context.Context, query string, hits []index.Hit, cfg *config.Config) ([]index.Hit, error) {
-	path := strings.TrimSpace(cfg.RerankModelPath)
-	if path == "" {
-		return nil, fmt.Errorf("retrieval: rerank_model_path is empty for aikit rerank")
+	dir := strings.TrimSpace(cfg.RerankModelPath)
+	if dir == "" {
+		dir = config.ModelDir(cfg.RerankModel)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("retrieval: aikit rerank canceled: %w", err)
@@ -85,7 +87,7 @@ func aikitRerank(ctx context.Context, query string, hits []index.Hit, cfg *confi
 		documents = append(documents, truncateRunes(text, 2000))
 	}
 
-	ce, err := loadAikitCrossEncoder(path)
+	ce, err := loadAikitCrossEncoder(dir)
 	if err != nil {
 		return nil, fmt.Errorf("retrieval: load aikit cross-encoder: %w", err)
 	}

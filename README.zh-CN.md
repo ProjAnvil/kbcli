@@ -36,7 +36,7 @@
 - 每个目录一个可携带的 `.kbvec`：magic 头 `KBCLI\x00`、gob 载荷、经 `os.Rename` 原子替换。旧版 `.kbcli.kbvec` 仍可加载。embedder 域隔离会拒绝加载由不同 embedder 构建的索引。
 - 两种 embedder，均为 384 维并做 L2 归一化：零依赖的进程内哈希模型（FNV-1a 词一元语法 + 字符 3-gram），以及可选的纯 Go `rembed` 神经模型。
 - 支持 OpenAI 兼容 Chat Completions 与 Anthropic Messages API 两类聊天后端（`chat_provider`、`base_url`、`model`、`api_key`）。后端不可达时，答案退化为依据排名最高证据生成的抽取式答案，并带 `[n]` 引用。
-- 源自 Porto 的检索：`vector` / `bm25` / 加权 RRF `hybrid`（k=60），`cross_encoder`、`llm` 或本地 `aikit` 重排，`hyde` / `multi_query` / `decomposition` / `step_back` 查询变换，指代消解 condense 门，以及 kbcli 自有的 `min_score` 与 `context_expand`。
+- 源自 Porto 的检索：`vector` / `bm25` / 加权 RRF `hybrid`（k=60），**默认启用本地 `aikit` cross-encoder 重排**（无需服务、Python 或 cgo）；外部 HTTP `cross_encoder` 与 `llm` 重排仍可配置。`hyde` / `multi_query` / `decomposition` / `step_back` 查询变换、指代消解 condense 门，以及 kbcli 自有的 `min_score` 与 `context_expand` 同样可用。
 - 源自 Porto 的意图路由：`direct` 跳过检索，`quick_rag` 直接检索原问题，`deep_rag` 走完整管线。意图 provider 默认继承全局配置。
 - 三个全屏视图，基于 `bubbletea` + `bubbles` + `lipgloss`。主题跟随终端背景（OSC 11 或 `COLORFGBG`）：两栏聊天（左侧会话、右侧排名证据；`ctrl+]` 收起证据栏）、主从式设置界面（分组栏 + 详情栏）、索引确认对话框。
 - 双语界面与提示词，英文 / 简体中文，由 `language`（`en`|`zh`）选择。英文与原有界面逐字节一致。
@@ -53,6 +53,41 @@ make install    # go install ./cmd/kbcli
 ```
 
 无 CGO、无 Python、无服务端。产物是单一二进制文件。
+
+### 预编译二进制
+
+每个 GitHub release 都为各平台发布两档压缩包。资产名包含操作系统与架构；完整档（full）的名称还包含 `full`。
+
+| 档位 | 资产名 | 内容 |
+| --- | --- | --- |
+| 普通 | `kbcli-<version>-<os>-<arch>`（Windows 为 `kbcli-<version>-windows-amd64.exe`） | 仅二进制；重排模型在首次运行时下载。 |
+| 完整 | `kbcli-full-<version>-<os>-<arch>.tar.gz`（Windows 为 `kbcli-full-<version>-windows-amd64.zip`） | 二进制加上 `model/ms-marco-MiniLM-L-6-v2/` 及全部五个模型文件；完全离线。 |
+
+解压后从解压目录运行二进制（请将示例名称换成你的版本与平台）：
+
+```sh
+tar -xzf kbcli-full-v0.1.2-darwin-arm64.tar.gz   # Windows：unzip kbcli-full-v0.1.2-windows-amd64.zip
+./kbcli
+```
+
+完整档包含：
+
+```
+kbcli                                  # Windows 为 kbcli.exe
+model/ms-marco-MiniLM-L-6-v2/
+  config.json
+  model.safetensors
+  tokenizer.json
+  tokenizer_config.json
+  vocab.txt
+```
+
+完整档首次运行时，kbcli 会把可执行文件目录下的 `model/` 复制到 `~/.kbcli/model/`，无需网络。每个 release 还会上传 `checksums.txt`，可用它校验下载：
+
+```sh
+sha256sum -c checksums.txt --ignore-missing
+# macOS：shasum -a 256 -c checksums.txt --ignore-missing
+```
 
 ### 远程安装
 
@@ -99,6 +134,8 @@ kbcli settings set top_k 9     # 一个稀疏的工作区覆盖
 
 `chat_provider` 选择聊天 API 协议：`openai`（默认，OpenAI 兼容的 Chat Completions）或 `anthropic`（Anthropic Messages API）。`base_url` 必须指向与所选协议兼容的接口。使用 Anthropic 官方 API 时，请将 `base_url` 留空，或设为 `https://api.anthropic.com/v1`——agent 会自动回退到与协议匹配的默认地址（默认的 OpenAI `base_url` 仅适用于 `openai`）。
 
+重排**默认开启**：`rerank_enabled: true`、`rerank_type: aikit`、`rerank_model: ms-marco-MiniLM-L-6-v2`。当 `rerank_model_path` 为空时，模型位于受管目录 `~/.kbcli/model/ms-marco-MiniLM-L-6-v2/`。普通发行版首次运行时，kbcli 会检查该目录；若缺少五个模型文件，会在 TUI 启动前带进度行下载它们（约 92 MB）。下载或复制完成前无法开始聊天。将 `rerank_model_path` 设为已有的本地模型目录即可跳过下载。详见[本地 cross-encoder 重排](#本地-cross-encoder-重排)，以及外部 HTTP 与 LLM 选项。
+
 `intent_mode` 选择路由模式：`off`、`binary`（`direct` 或 `rag`）、`adaptive`（`direct`、`quick_rag`、`deep_rag`）。默认值为 `adaptive`。`direct` 跳过检索，只做简短回答。`quick_rag` 用原问题检索，不做事指消解与查询变换。`deep_rag` 走完整管线。
 
 意图分类器由 `intent_provider`、`intent_api_key`、`intent_base_url`、`intent_model` 配置。默认的 `intent_provider: inherit` 复用全局聊天协议、接口、模型与密钥。其余三个字段留空时继承全局值。分类器不可用时回退到关键词规则，再回退到完整 RAG 路径。
@@ -113,27 +150,31 @@ kbcli 的默认值现在与 LangChain 的 `RecursiveCharacterTextSplitter` 字�
 
 ### 本地 cross-encoder 重排
 
-`rerank_type: aikit` 通过
+重排**默认开启**：`rerank_type: aikit` 通过
 [`github.com/townsendmerino/aikit`](https://github.com/townsendmerino/aikit)
-v1.78.0 在进程内运行 cross-encoder。它不需要 HTTP 服务、Python、ONNX Runtime 或 cgo。该 API 属于 Experimental，因此 kbcli 固定依赖版本。
+v1.78.0 在进程内运行 cross-encoder。它不需要 HTTP 服务、Python、ONNX Runtime 或 cgo；该 API 属于 Experimental，因此 kbcli 固定依赖版本。
 
-下载参考模型：
+**受管模型（默认）。** 当 `rerank_model_path` 为空时，kbcli 使用 `~/.kbcli/model/<rerank_model>`，默认为 `~/.kbcli/model/ms-marco-MiniLM-L-6-v2/`。普通发行版首次运行时，kbcli 会检查该目录下的五个文件；若缺少任意一个，就会带进度行下载（约 92 MB，Hugging Face 修订版 `233902d25c440f23af6f7d6e94d2946bac0bee0a`），且在 TUI 启动前完成。下载或复制完成前无法开始聊天。[完整离线发行档](#预编译二进制)附带同样的五个文件，因此其首次运行只需复制到受管目录——无需网络。
 
-```sh
-huggingface-cli download cross-encoder/ms-marco-MiniLM-L-6-v2 \
-  config.json model.safetensors tokenizer.json tokenizer_config.json vocab.txt \
-  --local-dir ~/.cache/kbcli/rerank/ms-marco-MiniLM-L-6-v2
-```
-
-配置：
+**外部本地模型。** 将 `rerank_model_path` 设为包含 `config.json`、`model.safetensors` 和 tokenizer 文件的目录；kbcli 会将其视为外部管理并跳过下载：
 
 ```sh
 kbcli config set rerank_enabled on
 kbcli config set rerank_type aikit
-kbcli config set rerank_model_path ~/.cache/kbcli/rerank/ms-marco-MiniLM-L-6-v2
+kbcli config set rerank_model_path /path/to/ms-marco-MiniLM-L-6-v2
 ```
 
-选择 `aikit` 时必须填写 `rerank_model_path`。目录需包含 `config.json`、`model.safetensors` 和 tokenizer 文件。该设置只在查询时生效，不会让向量索引失效。加载或打分失败时会 fail open，保留原始检索顺序。
+如需自行定制，也可手动下载参考模型：
+
+```sh
+huggingface-cli download cross-encoder/ms-marco-MiniLM-L-6-v2 \
+  config.json model.safetensors tokenizer.json tokenizer_config.json vocab.txt \
+  --local-dir /tmp/ms-marco-MiniLM-L-6-v2
+```
+
+**其他重排器。** `rerank_type: cross_encoder` 使用外部 HTTP cross-encoder，由 `rerank_base_url`、`rerank_model` 和 `rerank_api_key` 配置；`rerank_type: llm` 使用 LLM 重排器。两者仍可配置，但都需要你运行相应服务。
+
+所有重排设置都只在查询时生效，不会让 `.kbvec` 索引失效。加载或打分失败时会 fail open，保留原始检索顺序。
 
 `chunk_size` 与 `chunk_overlap` 都会影响索引：修改任一项都会使 `.kbvec` 索引失效，必须重建索引（`:reindex` / `kbcli reindex`）。请用 recall@k 指导调整。
 

@@ -1,4 +1,4 @@
-# Pushing a v* tag cross-compiles five binaries and publishes them as release assets.
+# Pushing a v* tag publishes normal binaries and full offline archives as assets.
 name: Release binaries
 
 on:
@@ -19,19 +19,51 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Build binaries
+      - name: Download rerank model
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          REPO=cross-encoder/ms-marco-MiniLM-L-6-v2
+          REV=233902d25c440f23af6f7d6e94d2946bac0bee0a
+          DST="$RUNNER_TEMP/model/$REPO"
+          mkdir -p "$DST"
+          ARGS=(-fL --retry 3)
+          if [ -n "${HF_TOKEN:-}" ]; then ARGS+=(-H "Authorization: Bearer ${HF_TOKEN}"); fi
+          for f in config.json model.safetensors tokenizer.json tokenizer_config.json vocab.txt; do
+            curl "${ARGS[@]}" "https://huggingface.co/$REPO/resolve/$REV/$f" -o "$DST/$f"
+          done
+          (cd "$RUNNER_TEMP/model" && sha256sum -c "$GITHUB_WORKSPACE/assets/model.sha256")
+      - name: Build binaries and full archives
         run: |
           TAG="${GITHUB_REF_NAME}"
+          MODEL="$RUNNER_TEMP/model/cross-encoder/ms-marco-MiniLM-L-6-v2"
           mkdir -p dist
           CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w -X main.version=${TAG}" -o dist/kbcli-${TAG}-darwin-amd64 ./cmd/kbcli
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w -X main.version=${TAG}" -o dist/kbcli-${TAG}-darwin-arm64 ./cmd/kbcli
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X main.version=${TAG}" -o dist/kbcli-${TAG}-linux-amd64 ./cmd/kbcli
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X main.version=${TAG}" -o dist/kbcli-${TAG}-linux-arm64 ./cmd/kbcli
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X main.version=${TAG}" -o dist/kbcli-${TAG}-windows-amd64.exe ./cmd/kbcli
+          # Normal tier: the five raw binaries above are uploaded unchanged.
+          STAGE="$RUNNER_TEMP/stage"
+          for spec in "darwin amd64" "darwin arm64" "linux amd64" "linux arm64"; do
+            set -- $spec
+            os=$1; arch=$2
+            d="$STAGE/kbcli-full-${TAG}-${os}-${arch}"
+            mkdir -p "$d/model"
+            cp "dist/kbcli-${TAG}-${os}-${arch}" "$d/kbcli"
+            cp -R "$MODEL" "$d/model/ms-marco-MiniLM-L-6-v2"
+            tar -czf "$GITHUB_WORKSPACE/dist/kbcli-full-${TAG}-${os}-${arch}.tar.gz" -C "$d" .
+          done
+          d="$STAGE/kbcli-full-${TAG}-windows-amd64"
+          mkdir -p "$d/model"
+          cp "dist/kbcli-${TAG}-windows-amd64.exe" "$d/kbcli.exe"
+          cp -R "$MODEL" "$d/model/ms-marco-MiniLM-L-6-v2"
+          (cd "$d" && zip -qr "$GITHUB_WORKSPACE/dist/kbcli-full-${TAG}-windows-amd64.zip" .)
       - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF_NAME}"
+          (cd dist && sha256sum kbcli-* > checksums.txt)
           gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
           gh release upload "$TAG" dist/* --clobber

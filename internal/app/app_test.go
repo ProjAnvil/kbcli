@@ -12,6 +12,7 @@ import (
 	"github.com/ProjAnvil/kbcli/internal/config"
 	"github.com/ProjAnvil/kbcli/internal/embed"
 	"github.com/ProjAnvil/kbcli/internal/index"
+	"github.com/ProjAnvil/kbcli/internal/rerankmodel"
 	"github.com/ProjAnvil/kbcli/internal/settings"
 )
 
@@ -535,5 +536,86 @@ func TestSaveSettingsWorkspace(t *testing.T) {
 	}
 	if cfg.TopK == 9 {
 		t.Fatal("global config was mutated")
+	}
+}
+
+func TestEnsureRerankModelSkipsWhenNotManaged(t *testing.T) {
+	old := ensureRerankModel
+	ensureRerankModel = func(context.Context, string, string, func(rerankmodel.Progress)) (bool, error) {
+		t.Fatal("model initializer must not run")
+		return false, nil
+	}
+	t.Cleanup(func() { ensureRerankModel = old })
+
+	disabled := config.Default()
+	disabled.RerankEnabled = false
+	wrongType := config.Default()
+	wrongType.RerankEnabled = true
+	wrongType.RerankType = config.RerankLLM
+	explicit := config.Default()
+	explicit.RerankEnabled = true
+	explicit.RerankType = config.RerankAikit
+	explicit.RerankModelPath = "/models/custom"
+
+	for _, tc := range []struct {
+		name string
+		app  *App
+	}{
+		{"nil config", &App{}},
+		{"disabled", &App{cfg: disabled}},
+		{"non-aikit", &App{cfg: wrongType}},
+		{"explicit path", &App{cfg: explicit}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			done, err := tc.app.EnsureRerankModel(context.Background(), nil)
+			if err != nil {
+				t.Fatalf("EnsureRerankModel: %v", err)
+			}
+			if done {
+				t.Fatal("done = true, want false")
+			}
+		})
+	}
+}
+
+func TestEnsureRerankModelProvisionsManagedModel(t *testing.T) {
+	cfg := config.Default()
+	cfg.RerankEnabled = true
+	cfg.RerankType = config.RerankAikit
+	cfg.RerankModelPath = ""
+	cfg.RerankModel = "fake-model"
+
+	var gotName, gotDir string
+	old := ensureRerankModel
+	ensureRerankModel = func(ctx context.Context, name, dir string, on func(rerankmodel.Progress)) (bool, error) {
+		gotName, gotDir = name, dir
+		if ctx == nil {
+			t.Error("nil context passed to initializer")
+		}
+		on(rerankmodel.Progress{Phase: "download", Downloaded: 1, Total: 2})
+		return true, nil
+	}
+	t.Cleanup(func() { ensureRerankModel = old })
+
+	seen := 0
+	done, err := (&App{cfg: cfg}).EnsureRerankModel(context.Background(), func(p rerankmodel.Progress) {
+		if p.Phase == "download" {
+			seen++
+		}
+	})
+	if err != nil {
+		t.Fatalf("EnsureRerankModel: %v", err)
+	}
+	if !done {
+		t.Fatal("done = false, want true")
+	}
+	if gotName != cfg.RerankModel {
+		t.Fatalf("model name = %q, want %q", gotName, cfg.RerankModel)
+	}
+	if gotDir == "" {
+		t.Fatal("model directory is empty")
+	}
+	if seen != 1 {
+		t.Fatalf("progress callbacks = %d, want 1", seen)
 	}
 }
