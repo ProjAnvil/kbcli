@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/ProjAnvil/kbcli/internal/embed"
 	"gopkg.in/yaml.v3"
 )
 
@@ -166,6 +168,8 @@ type Config struct {
 // runes with 200 overlap, but now applies only to plain-text sources.
 // Structured formats use SectionSize (1000) so one chunk never mixes several
 // headings or topics. CandidateK widens the pre-rerank pool from TopK to 40.
+// Hybrid retrieval is the default: it fuses dense vectors with BM25 before
+// reranking so exact identifiers and Chinese terms are not lost.
 // kbcli counts Go runes, the Unicode code-point analogue of Python len().
 func Default() *Config {
 	return &Config{
@@ -184,7 +188,7 @@ func Default() *Config {
 		ChunkStrategy:            ChunkStrategyAuto,
 		TopK:                     6,
 		CandidateK:               40,
-		RetrievalMethod:          RetrievalVector,
+		RetrievalMethod:          RetrievalHybrid,
 		BM25TopK:                 20,
 		HybridVectorWeight:       0.5,
 		RRFK:                     60,
@@ -229,7 +233,7 @@ func (c *Config) Clone() *Config {
 // stored in the vector file header so a stale index can be detected on load,
 // and so the UI can name the exact fields that drifted.
 func (c *Config) IndexSignature() string {
-	return strings.Join([]string{
+	parts := []string{
 		"chunk_size=" + strconv.Itoa(c.ChunkSize),
 		"chunk_overlap=" + strconv.Itoa(c.ChunkOverlap),
 		"section_size=" + strconv.Itoa(c.SectionSize),
@@ -237,7 +241,14 @@ func (c *Config) IndexSignature() string {
 		"chunker=" + ChunkerVersion,
 		"embedder=" + c.Embedder,
 		"embed_model=" + c.EmbedModel,
-	}, "|")
+	}
+	// The neural embedding domain changes with prefixes and quantization,
+	// neither of which is a user setting. Record it only for rembed so local
+	// hashing indexes keep their existing signature and are not reported stale.
+	if c.Embedder == ProviderRembed {
+		parts = append(parts, "embed_domain="+embed.RembedDomainVersion)
+	}
+	return strings.Join(parts, "|")
 }
 
 // IndexSignatureChanges compares a stored signature with the current config
@@ -249,12 +260,23 @@ func IndexSignatureChanges(stored string, current *Config) []string {
 	}
 	old := parseSignature(stored)
 	now := parseSignature(current.IndexSignature())
+	// Report every differing key, including derived keys such as chunker and
+	// embed_domain that have no editable setting. A silent signature change
+	// would otherwise leave the TUI unable to name the reason for a rebuild.
+	keys := make(map[string]struct{}, len(old)+len(now))
+	for k := range old {
+		keys[k] = struct{}{}
+	}
+	for k := range now {
+		keys[k] = struct{}{}
+	}
 	var out []string
-	for _, key := range IndexAffectingKeys() {
-		if old[key] != now[key] {
-			out = append(out, key)
+	for k := range keys {
+		if old[k] != now[k] {
+			out = append(out, k)
 		}
 	}
+	sort.Strings(out)
 	return out
 }
 

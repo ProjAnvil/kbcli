@@ -308,8 +308,8 @@ func TestSettingsEnterTogglesBoolAndCyclesEnum(t *testing.T) {
 		t.Fatal("enter did not toggle bool back off")
 	}
 
-	selectField(t, m, "retrieval_method") // enum: vector, bm25, hybrid
-	for _, want := range []string{"bm25", "hybrid", "vector"} {
+	selectField(t, m, "retrieval_method") // enum: vector, bm25, hybrid; default is hybrid
+	for _, want := range []string{"vector", "bm25", "hybrid"} {
 		got, _ = pressKey(m, "enter")
 		m = got.(*model)
 		if v, _ := m.draft.GetField("retrieval_method"); v.(string) != want {

@@ -9,6 +9,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
+## [0.3.1] - 2026-11-22
+
+A patch release that corrects the neural embedder's retrieval-domain contract
+and enables hybrid retrieval by default. It also adds a dependency-free
+evaluation command and machine-readable search output. **`rembed` indexes are
+invalidated**: run `kbcli reindex` once after upgrading. Indexes built with the
+default `local` embedder are unchanged.
+
+### Fixed
+
+- **Asymmetric e5 prefixes.** `rembed` previously prepended `"query: "` to
+  both queries and documents. The e5 family is trained with `"query: "` on
+  queries and `"passage: "` on documents; using one prefix for both sides
+  puts documents in the query representation space and silently degrades
+  recall. `EmbedQuery` and `EmbedDocuments` now apply the correct side through
+  an optional `QueryPrefixer` capability, and `CountForEmbedding` counts the
+  document-side prefix.
+- **Stale index detection.** `rembedVersion` now carries a domain version
+  (`#v2`), so `loadStore` rejects indexes built with the old symmetric prefix
+  instead of comparing incompatible vectors. `IndexSignature()` records
+  `embed_domain` for neural providers only, and `IndexSignatureChanges` now
+  reports every differing key, including derived keys such as `chunker` and
+  `embed_domain` that have no editable setting.
+- **Neural model memory.** `rembed.Load` now uses `WithInt8()` weight-only
+  quantization, cutting weight traffic about 4x with cosine >= 0.999 against
+  fp32. rembed falls back to fp32 on CPUs without AVX2+FMA. No new dependency
+  and no change to binary size.
+
+### Changed
+
+- **Hybrid retrieval is the default.** `retrieval_method` now defaults to
+  `hybrid`, which fuses dense vectors with BM25 by weighted RRF before
+  reranking. `vector` and `bm25` remain available for single-channel
+  workloads. This is a query-time change: no re-index is required for
+  `local` indexes, and the BM25 index is still built lazily on first use.
+
+### Added
+
+- **`kbcli eval`** runs a deterministic self-retrieval smoke test over indexed
+  chunks. It reports `recall@1`, `recall@k`, MRR and p50/p95 query latency,
+  and accepts `--samples`, `--top-k` and `--json`. It needs no API key, no
+  labelled data and no model download, so it can run in CI. Queries are
+  generated from chunk bodies, so recall is optimistic by design: use it to
+  detect regressions between configurations, not to claim answer quality.
+- **`kbcli search --json`** prints ranked hits as a stable JSON array with
+  `rank`, `score`, `source`, `heading`, `body` and `id`, for tool consumers.
+- **Tests** for the prefix capability, the rembed domain version and the
+  store's end-to-end query/document prefix wiring.
+
+### Upgrade notes
+
+1. **Users of `embedder: rembed` must rebuild once.** Run `kbcli reindex` in
+   the workspace, or type `:reindex` inside the TUI. The loader rejects an old
+   `.kbvec` with a clear message. The old file stays on disk and is ignored.
+2. **Users of the default `local` embedder need no action.** Its vectors,
+   version (`local-v1`) and build signature are unchanged.
+3. **Review the retrieval default.** Workloads tuned for `vector` can restore
+   the previous behaviour with
+   `kbcli config set retrieval_method vector`.
+4. **Establish a baseline.** Run `kbcli eval --samples 50` before and after
+   changing retrieval settings so recall changes are measurable.
+
+### Known limitations
+
+- The default `local` embedder is still a zero-dependency hashing model. It
+  remains the largest recall bottleneck; `embedder: rembed` is opt-in.
+- `rembed` int8 weight quantization can fall back to fp32 on CPUs without
+  AVX2+FMA. Vectors then differ slightly across machines, so a `.kbvec`
+  built on one host should be rebuilt on a host with a different CPU feature
+  set when exact reproducibility matters.
+- The vector width is still fixed at 384. Models with 768 or 1024 dimensions
+  are not usable yet.
+- `chunk_size: 4000` is a rune cap, while the default neural model accepts
+  about 512 tokens. `capPassagesByTokens` hard-splits over-long sections, so
+  the rune cap has little effect for `rembed` users.
+- `Chunk.Metadata` is still never populated, and retrieval has no metadata
+  filter. `kbcli eval` is a self-retrieval smoke test, not a question-answer
+  benchmark.
+- Retrieval still uses an exact brute-force scan with a full sort. An ANN
+  index and vector quantization are not implemented.
+- `read_file` can read any text file inside the workspace, including `.env`
+  style secrets. Its results are not numbered with `[n]`.
+- The boot and reindex full-screen modals still accept only `ctrl+c`.
+- Windows runtime behavior has not been verified on real hardware.
+
 ## [0.3.0] - 2026-11-22
 
 The second feature release. It adds a first-run API key wizard, per-extension

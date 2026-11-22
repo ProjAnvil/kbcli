@@ -78,8 +78,8 @@ func TestRembedVersion(t *testing.T) {
 		ref  string
 		want string
 	}{
-		{"org/name", "rembed:org/name"},
-		{DefaultRembedRef, "rembed:" + DefaultRembedRef},
+		{"org/name", "rembed:org/name#" + RembedDomainVersion},
+		{DefaultRembedRef, "rembed:" + DefaultRembedRef + "#" + RembedDomainVersion},
 	}
 	for _, tc := range cases {
 		t.Run(tc.ref, func(t *testing.T) {
@@ -90,8 +90,8 @@ func TestRembedVersion(t *testing.T) {
 	}
 	// The Embedder's Version() reports the same key derived from the ref.
 	e := &rembedEmbedder{version: rembedVersion("org/name")}
-	if got := e.Version(); got != "rembed:org/name" {
-		t.Errorf("Version() = %q, want %q", got, "rembed:org/name")
+	if got := e.Version(); got != "rembed:org/name#"+RembedDomainVersion {
+		t.Errorf("Version() = %q, want %q", got, "rembed:org/name#"+RembedDomainVersion)
 	}
 }
 

@@ -1025,6 +1025,18 @@ func (a *App) install(root, indexPath string, emb embed.Embedder, store index.St
 	return nil
 }
 
+// Chunks returns a defensive copy of every indexed chunk. The eval command
+// uses it to build a self-retrieval smoke test without an LLM or a model
+// download. A nil store returns nil.
+func (a *App) Chunks() []index.Chunk {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.store == nil {
+		return nil
+	}
+	return a.store.Chunks()
+}
+
 // Sources returns sorted relative source paths, useful for diagnostics.
 func (a *App) Sources() []string {
 	a.mu.RLock()

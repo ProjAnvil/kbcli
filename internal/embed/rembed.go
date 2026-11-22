@@ -10,24 +10,37 @@ import (
 	"github.com/rostamlabs/rembed"
 )
 
-// queryPrefix is the e5-family instruction prefix. Queries and documents are
-// embedded through the same method, so the symmetric "query: " prefix is used
-// on both sides (valid per e5 usage notes and matches Sentia).
-const queryPrefix = "query: "
+const (
+	// queryPrefix and documentPrefix implement the e5 asymmetric contract.
+	// rembed embeds exactly the text it receives, so this package applies both
+	// prefixes before the call. Never use one prefix for both sides.
+	queryPrefix    = "query: "
+	documentPrefix = "passage: "
+
+	// RembedDomainVersion marks the neural embedding-space contract. Bump it
+	// whenever prefixes, quantization or pooling change. loadStore rejects an
+	// index whose EmbedderVersion differs, so a bump forces one re-index
+	// instead of silently comparing incompatible vectors.
+	RembedDomainVersion = "v2"
+)
+
+var (
+	_ Embedder      = (*rembedEmbedder)(nil)
+	_ TokenCounter  = (*rembedEmbedder)(nil)
+	_ QueryPrefixer = (*rembedEmbedder)(nil)
+)
 
 // rembedEmbedder adapts rembed's in-process pure-Go neural encoder to the
 // Embedder contract. rembed.Embedder is documented safe for concurrent use and
 // this wrapper adds no mutable state, so it is safe for concurrent use too.
+//
+// Callers must go through EmbedQuery and EmbedDocuments. Calling Embed or
+// EmbedBatch directly bypasses the e5 prefixes and produces unusable vectors.
 type rembedEmbedder struct {
 	model     *rembed.Embedder
 	version   string
 	maxTokens int
 }
-
-var (
-	_ Embedder     = (*rembedEmbedder)(nil)
-	_ TokenCounter = (*rembedEmbedder)(nil)
-)
 
 // newRembed loads the neural model identified by ref. Nothing is downloaded at
 // package init; rembed.Load may fetch weights from the Hugging Face Hub on the
@@ -49,7 +62,9 @@ func newRembed(ref string) (*rembedEmbedder, error) {
 		}
 	}
 
-	m, err := rembed.Load(ref)
+	// Weight-only int8 cuts weight traffic about 4x with cosine >= 0.999
+	// against fp32. rembed falls back to fp32 on CPUs without AVX2+FMA.
+	m, err := rembed.Load(ref, rembed.WithInt8())
 	if err != nil {
 		return nil, fmt.Errorf("embed: load rembed model %q: %w", ref, err)
 	}
@@ -72,12 +87,18 @@ func newRembed(ref string) (*rembedEmbedder, error) {
 
 func (e *rembedEmbedder) Dim() int { return Dim }
 
-// Version identifies the retrieval domain as "rembed:" plus the model ref. It
-// is derived from the ref alone so it is stable and deterministic.
+// Version identifies the retrieval domain as the model ref plus the domain
+// version. It is derived from the ref alone so it is stable and deterministic.
 func (e *rembedEmbedder) Version() string { return e.version }
 
+// QueryPrefix returns the e5 query-side instruction.
+func (e *rembedEmbedder) QueryPrefix() string { return queryPrefix }
+
+// DocumentPrefix returns the e5 passage-side instruction.
+func (e *rembedEmbedder) DocumentPrefix() string { return documentPrefix }
+
 // Embed encodes one text by delegating to EmbedBatch and requiring exactly one
-// vector back.
+// vector back. The caller supplies any required prefix.
 func (e *rembedEmbedder) Embed(text string) ([]float32, error) {
 	vecs, err := e.EmbedBatch([]string{text})
 	if err != nil {
@@ -89,14 +110,10 @@ func (e *rembedEmbedder) Embed(text string) ([]float32, error) {
 	return vecs[0], nil
 }
 
-// EmbedBatch encodes all texts in a single rembed.Embed call, prefixing each
-// with queryPrefix and preserving input order.
+// EmbedBatch encodes all texts in a single rembed.Embed call, preserving input
+// order. Prefixes are applied by EmbedDocuments and EmbedQuery, never here.
 func (e *rembedEmbedder) EmbedBatch(texts []string) ([][]float32, error) {
-	prefixed := make([]string, len(texts))
-	for i, text := range texts {
-		prefixed[i] = queryPrefix + text
-	}
-	vecs, err := e.model.Embed(context.Background(), prefixed)
+	vecs, err := e.model.Embed(context.Background(), texts)
 	if err != nil {
 		return nil, fmt.Errorf("embed: rembed batch of %d texts: %w", len(texts), err)
 	}
@@ -108,15 +125,18 @@ func (e *rembedEmbedder) EmbedBatch(texts []string) ([][]float32, error) {
 
 func (e *rembedEmbedder) Close() error { return e.model.Close() }
 
-// CountForEmbedding counts the exact text that will be embedded: rembed's
-// EmbedBatch prepends queryPrefix to every text, so it is included here.
+// CountForEmbedding counts the exact text that will be embedded: the document
+// prefix is prepended by EmbedDocuments, so it is included here.
 // rembed.Tokenize is unstable; this is the only caller in kbcli.
 func (e *rembedEmbedder) CountForEmbedding(text string) int {
-	return len(e.model.Tokenize(queryPrefix + text))
+	return len(e.model.Tokenize(documentPrefix + text))
 }
 
 // MaxTokens returns the cached per-input limit probed at load time.
 func (e *rembedEmbedder) MaxTokens() int { return e.maxTokens }
 
-// rembedVersion builds the retrieval-domain key for a neural model ref.
-func rembedVersion(ref string) string { return "rembed:" + ref }
+// rembedVersion builds the retrieval-domain key for a neural model ref. The
+// domain version makes a prefix or quantization change invalidate old indexes.
+func rembedVersion(ref string) string {
+	return "rembed:" + ref + "#" + RembedDomainVersion
+}

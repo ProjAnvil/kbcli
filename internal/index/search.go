@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"sort"
+
+	"github.com/ProjAnvil/kbcli/internal/embed"
 )
 
 // defaultTopK is used when callers pass k <= 0.
@@ -37,7 +39,7 @@ func (s *store) Search(query string, k int) ([]Hit, error) {
 		return []Hit{}, nil
 	}
 
-	qvec, err := s.emb.Embed(query)
+	qvec, err := embed.EmbedQuery(s.emb, query)
 	if err != nil {
 		return nil, fmt.Errorf("index: embed query: %w", err)
 	}

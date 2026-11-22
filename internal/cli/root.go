@@ -64,6 +64,7 @@ func NewRootCmd(cfg *config.Config, version string) *cobra.Command {
 	root.AddCommand(newConfigCmd(cfg))
 	root.AddCommand(newSettingsCmd(cfg, g))
 	root.AddCommand(newSearchCmd(cfg, g))
+	root.AddCommand(newEvalCmd(cfg, g))
 	root.AddCommand(newVersionCmd(version))
 
 	return root

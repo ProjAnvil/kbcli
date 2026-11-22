@@ -119,7 +119,7 @@ func (s *store) Add(chunks []Chunk) error {
 		if end > len(texts) {
 			end = len(texts)
 		}
-		batch, err := s.emb.EmbedBatch(texts[start:end])
+		batch, err := embed.EmbedDocuments(s.emb, texts[start:end])
 		if err != nil {
 			return fmt.Errorf("index: embed batch [%d:%d]: %w", start, end, err)
 		}

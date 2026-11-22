@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 // newSearchCmd builds "kbcli search <query>".
 func newSearchCmd(cfg *config.Config, g *globals) *cobra.Command {
 	var topK int
+	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search the index without an LLM",
@@ -32,8 +34,27 @@ func newSearchCmd(cfg *config.Config, g *globals) *cobra.Command {
 			}
 			w := cmd.OutOrStdout()
 			if len(hits) == 0 {
+				if jsonOut {
+					return json.NewEncoder(w).Encode([]searchHit{})
+				}
 				fmt.Fprintln(w, "no matches")
 				return nil
+			}
+			if jsonOut {
+				out := make([]searchHit, 0, len(hits))
+				for i, h := range hits {
+					out = append(out, searchHit{
+						Rank:    i + 1,
+						Score:   h.Score,
+						Source:  h.Chunk.Source,
+						Heading: h.Chunk.Heading,
+						Body:    h.Chunk.Body,
+						ID:      h.Chunk.ID,
+					})
+				}
+				enc := json.NewEncoder(w)
+				enc.SetIndent("", "  ")
+				return enc.Encode(out)
 			}
 			for i, h := range hits {
 				fmt.Fprintf(w, "#%d  score=%.3f  %s  %s\n", i+1, h.Score, h.Chunk.Source, h.Chunk.Heading)
@@ -45,7 +66,18 @@ func newSearchCmd(cfg *config.Config, g *globals) *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&topK, "top-k", cfg.TopK, "number of results to print")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "print ranked hits as JSON for tool consumers")
 	return cmd
+}
+
+// searchHit is the stable JSON shape returned by "kbcli search --json".
+type searchHit struct {
+	Rank    int     `json:"rank"`
+	Score   float64 `json:"score"`
+	Source  string  `json:"source"`
+	Heading string  `json:"heading"`
+	Body    string  `json:"body"`
+	ID      string  `json:"id"`
 }
 
 // snippet returns up to n non-empty lines from body.

@@ -68,7 +68,7 @@ var fieldCatalog = []Field{
 
 	{Key: "top_k", Label: "Top K", Group: groupRetrieval, Kind: FieldInt, Min: 1, Max: 50, Step: 1, Help: "Final number of evidence passages."},
 	{Key: "candidate_k", Label: "Candidate K", Group: groupRetrieval, Kind: FieldInt, Min: 1, Max: 200, Step: 5, Help: "Broad candidate pool fetched before reranking (default 40). Query-time only; no re-index needed."},
-	{Key: "retrieval_method", Label: "Retrieval", Group: groupRetrieval, Kind: FieldEnum, Options: []string{RetrievalVector, RetrievalBM25, RetrievalHybrid}, Help: "Porto: vector / BM25 / weighted RRF hybrid."},
+	{Key: "retrieval_method", Label: "Retrieval", Group: groupRetrieval, Kind: FieldEnum, Options: []string{RetrievalVector, RetrievalBM25, RetrievalHybrid}, Help: "Default: hybrid. Fuses dense vectors with BM25 by weighted RRF. vector and bm25 select a single channel."},
 	{Key: "bm25_top_k", Label: "BM25 candidate K", Group: groupRetrieval, Kind: FieldInt, Min: 1, Max: 200, Step: 5, Help: "Porto: sparse candidate pool amplification before RRF fusion."},
 	{Key: "hybrid_vector_weight", Label: "Vector weight", Group: groupRetrieval, Kind: FieldFloat, Min: 0, Max: 1, Step: 0.05, Help: "Porto: RRF weight for the vector list; BM25 gets 1-w."},
 	{Key: "rrf_k", Label: "RRF k", Group: groupRetrieval, Kind: FieldInt, Min: 1, Max: 200, Step: 5, Help: "Porto: reciprocal rank smoothing constant, default 60."},

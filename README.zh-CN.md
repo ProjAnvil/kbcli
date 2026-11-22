@@ -57,7 +57,7 @@
 - 每个目录一个可携带的 `.kbvec`：magic 头 `KBCLI\x00`、gob 载荷、经 `os.Rename` 原子替换。旧版 `.kbcli.kbvec` 仍可加载。embedder 域隔离会拒绝加载由不同 embedder 构建的索引。
 - 两种 embedder，均为 384 维并做 L2 归一化：零依赖的进程内哈希模型（FNV-1a 词一元语法 + 字符 3-gram），以及可选的纯 Go `rembed` 神经模型。
 - 支持 OpenAI 兼容 Chat Completions 与 Anthropic Messages API 两类聊天后端（`chat_provider`、`base_url`、`model`、`api_key`）。首次运行的 TUI 向导会收集协议、遮蔽显示的 API key、接口地址与模型，做一次短连通性检查，并就地重建 agent；按 `ctrl+s` 可跳过，供离线使用。后端不可达时，答案退化为依据排名最高证据生成的抽取式答案，并带 `[n]` 引用。
-- 源自 Porto 的检索：`vector` / `bm25` / 加权 RRF `hybrid`（k=60），**默认启用本地 `aikit` cross-encoder 重排**（无需服务、Python 或 cgo）。较宽的 `candidate_k` 候选池（默认 40）先喂给重排，`min_score` 在归一化后的重排分数上执行，改写问题的同时还会用原始问题再召回一次；grounded prompt 与 `kb_search` 共用一套引用编号。检索为空或失败时明确拒答，而不是凭空编造。外部 HTTP `cross_encoder` 与 `llm` 重排仍可配置。`hyde` / `multi_query` / `decomposition` / `step_back` 查询变换、指代消解 condense 门，以及 kbcli 自有的 `context_expand` 同样可用。
+- 源自 Porto 的检索：`vector` / `bm25` / 加权 RRF `hybrid`（k=60）。**默认改用 `hybrid`**。稠密向量先与 BM25 融合，再进入重排。精确标识符、版本号与中文词不会在一阶段召回中丢失。`vector` 与 `bm25` 只启用单通道。**默认启用本地 `aikit` cross-encoder 重排**（无需服务、Python 或 cgo）。较宽的 `candidate_k` 候选池（默认 40）先喂给重排，`min_score` 在归一化后的重排分数上执行，改写问题的同时还会用原始问题再召回一次；grounded prompt 与 `kb_search` 共用一套引用编号。检索为空或失败时明确拒答，而不是凭空编造。外部 HTTP `cross_encoder` 与 `llm` 重排仍可配置。`hyde` / `multi_query` / `decomposition` / `step_back` 查询变换、指代消解 condense 门，以及 kbcli 自有的 `context_expand` 同样可用。
 - 源自 Porto 的意图路由：`direct` 跳过检索，`quick_rag` 直接检索原问题，`deep_rag` 走完整管线。意图 provider 默认继承全局配置。`why?` 之类的短问不再绕过知识库。
 - 结构化切分：Strategy + Registry 按文件后缀选择切分器（Markdown 标题、CSV 行组、HTML 标题、PDF 页、DOCX 章节），使一个分块尽量落在同一节内；`chunk_strategy: fixed` 可恢复旧版单一尺寸切分。
 - 四个全屏视图，基于 `bubbletea` + `bubbles` + `lipgloss`。主题跟随终端背景（OSC 11 或 `COLORFGBG`）：两栏聊天（左侧会话、右侧排名证据；`ctrl+]` 收起证据栏）、主从式设置界面（分组栏 + 详情栏）、索引确认对话框，以及首次运行的 API key 向导。
@@ -131,14 +131,18 @@ go install github.com/ProjAnvil/kbcli/cmd/kbcli@latest
 kbcli index ./docs
 cd ./docs && kbcli
 kbcli search "retry policy" --index ./docs/.kbvec
+kbcli search "retry policy" --json --index ./docs/.kbvec
+kbcli eval --samples 50 --index ./docs/.kbvec
 kbcli config set api_key sk-...
 ```
+
+`kbcli eval` 不依赖外部服务。它输出 `recall@1`、`recall@k`、MRR 与 p50/p95 查询延迟。不需要 API key、标注数据或模型下载。请用它在自己的语料上对比检索配置。查询来自块正文，所以召回率偏高。请把数字当作回归信号，不要当作回答质量分数。`kbcli search --json` 输出稳定的 JSON 数组，供工具消费。
 
 在 TUI 中输入 `:index <dir>` 可为另一个目录建索引（需两步确认）。
 
 启动时不建索引。当前目录存在 `.kbvec` 时，聊天立即开始。否则聊天栏会提示输入 `:index <dir>`，或运行 `kbcli index <dir>`。启动时不做任何扫描，也不向上级目录查找。
 
-CLI 子命令：`index`、`reindex`、`update`、`config`、`settings`、`search`、`version`。TUI 内命令：`:reindex`、`:update`、`:settings`、`:stale`、`:clear`、`:help`、`:index`、`:q`（输入行为空时也可按 `q`）。`q` 和 `ctrl+c` 退出；`esc` 用于取消正在生成的回答，不再退出。
+CLI 子命令：`index`、`reindex`、`update`、`config`、`settings`、`search`、`eval`、`version`。TUI 内命令：`:reindex`、`:update`、`:settings`、`:stale`、`:clear`、`:help`、`:index`、`:q`（输入行为空时也可按 `q`）。`q` 和 `ctrl+c` 退出；`esc` 用于取消正在生成的回答，不再退出。
 
 回答以流式方式逐字进入聊天栏。从按下 `enter` 到首个 token 出现之间（含意图路由、检索、重排与生成），思考图标会持续转动。这一过程中的任意时刻按 `esc` 即可取消整个请求；被取消的请求不会把助手回复或降级文案写入会话。工具轮的前导文字会从实时文本中清除，只有最终回答那一轮会进入聊天记录。
 

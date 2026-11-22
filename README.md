@@ -57,7 +57,7 @@ Schematic of the chat view (not a screenshot):
 - One portable `.kbvec` per directory: magic header `KBCLI\x00`, gob payload, atomic rename via `os.Rename`. Legacy `.kbcli.kbvec` still loads, and embedder-domain isolation refuses an index built by a different embedder.
 - Two embedders, both 384-dimensional and L2-normalized: a zero-dependency in-process hashing model (FNV-1a word unigrams + character 3-grams) and an optional pure-Go `rembed` neural model.
 - Chat backends for both OpenAI-compatible Chat Completions and the Anthropic Messages API (`chat_provider`, `base_url`, `model`, `api_key`). A first-run TUI wizard collects the provider, a masked API key, the endpoint and the model, runs a short connectivity check, and rebuilds the live agent in place; `ctrl+s` skips it for offline use. When the backend is unreachable, answers degrade to a deterministic extractive answer from the top evidence with `[n]` citations.
-- Porto-derived retrieval: `vector` / `bm25` / weighted-RRF `hybrid` (k=60), with **local `aikit` cross-encoder reranking on by default** (no service, no Python, no cgo). A broad `candidate_k` pool (default 40) feeds reranking, `min_score` is applied to normalized post-rerank scores, the original question is recalled alongside a condensed rewrite, and one shared citation ledger numbers both the grounded prompt and `kb_search` results. Empty or failed retrieval returns an explicit refusal instead of a fabricated answer. External HTTP `cross_encoder` and `llm` reranking remain configurable, as do `hyde` / `multi_query` / `decomposition` / `step_back` query transforms, an anaphora condense gate, and kbcli's own `context_expand`.
+- Porto-derived retrieval: `vector` / `bm25` / weighted-RRF `hybrid` (k=60). **`hybrid` is now the default**; it fuses dense vectors with BM25 before reranking so exact identifiers, version strings and Chinese terms survive the first stage. `vector` and `bm25` select a single channel. **Local `aikit` cross-encoder reranking is on by default** (no service, no Python, no cgo). A broad `candidate_k` pool (default 40) feeds reranking, `min_score` is applied to normalized post-rerank scores, the original question is recalled alongside a condensed rewrite, and one shared citation ledger numbers both the grounded prompt and `kb_search` results. Empty or failed retrieval returns an explicit refusal instead of a fabricated answer. External HTTP `cross_encoder` and `llm` reranking remain configurable, as do `hyde` / `multi_query` / `decomposition` / `step_back` query transforms, an anaphora condense gate, and kbcli's own `context_expand`.
 - Porto-derived intent router: `direct` skips retrieval, `quick_rag` searches the original question, `deep_rag` runs the full pipeline. The intent provider inherits global settings by default. Short questions such as `why?` no longer bypass the knowledge base.
 - Structure-aware chunking: a Strategy + Registry selects a splitter per file extension (Markdown headings, CSV row groups, HTML headings, PDF pages, DOCX sections) so one chunk stays inside one section; `chunk_strategy: fixed` restores the legacy single-size splitter.
 - Four full-screen `bubbletea` + `bubbles` + `lipgloss` views with a theme that follows the terminal background (OSC 11, or `COLORFGBG`): a two-pane chat (conversation left, ranked evidence right; `ctrl+]` collapses the evidence pane), a master-detail settings screen (group rail + detail pane), an index confirmation dialog, and the first-run API key wizard.
@@ -131,14 +131,24 @@ The module path uses the organisation casing `ProjAnvil`. Go module paths are ca
 kbcli index ./docs
 cd ./docs && kbcli
 kbcli search "retry policy" --index ./docs/.kbvec
+kbcli search "retry policy" --json --index ./docs/.kbvec
+kbcli eval --samples 50 --index ./docs/.kbvec
 kbcli config set api_key sk-...
 ```
+
+`kbcli eval` is a dependency-free self-retrieval smoke test. It reports
+`recall@1`, `recall@k`, MRR and p50/p95 query latency with no API key, no
+labelled data and no model download. Use it to compare retrieval settings on
+your own corpus. Recall is optimistic because queries are built from chunk
+bodies, so treat the numbers as a regression signal, not an answer-quality
+score. `kbcli search --json` prints the same ranked hits as a stable JSON
+array for tool consumers.
 
 Inside the TUI, type `:index <dir>` to index a different directory (two-step confirmation).
 
 Startup never indexes. If `.kbvec` exists in the current directory, chat starts immediately; otherwise the chat pane shows a hint to type `:index <dir>` or run `kbcli index <dir>`. No scan and no parent-directory walk happen at startup.
 
-CLI subcommands: `index`, `reindex`, `update`, `config`, `settings`, `search`, `version`. In-TUI commands: `:reindex`, `:update`, `:settings`, `:stale`, `:clear`, `:help`, `:index`, `:q` (also `q` on an empty input line). `q` and `ctrl+c` quit; `esc` cancels an in-flight answer instead of quitting.
+CLI subcommands: `index`, `reindex`, `update`, `config`, `settings`, `search`, `eval`, `version`. In-TUI commands: `:reindex`, `:update`, `:settings`, `:stale`, `:clear`, `:help`, `:index`, `:q` (also `q` on an empty input line). `q` and `ctrl+c` quit; `esc` cancels an in-flight answer instead of quitting.
 
 Answers stream into the chat pane as the model produces them. The thinking indicator spins from the moment `enter` is pressed until the first answer token arrives — covering intent routing, retrieval, reranking and generation. Press `esc` at any point during that window to cancel the whole request; a cancelled run writes no assistant turn and no fallback answer into the session. Tool-call preambles are discarded from the live transcript, so only the final answer round reaches the chat.
 
