@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -56,11 +57,54 @@ func rerankHits(
 	if err != nil || len(out) == 0 {
 		return hits, nil
 	}
+
+	// Cross-encoder logits and 0..1 relevance scores must share one scale with
+	// vector / RRF scores. Without this, min_score and the evidence bar are
+	// meaningless after reranking (aikit logits are unbounded). llmRerank only
+	// reorders and keeps the original 0..1 scores, so it needs no conversion.
+	switch cfg.RerankType {
+	case config.RerankAikit:
+		for i := range out {
+			out[i].Score = sigmoid(out[i].Score)
+		}
+	case config.RerankCrossEncoder:
+		for i := range out {
+			out[i].Score = clamp01(out[i].Score)
+		}
+	}
+
+	// rankHits only labels ranks. Actually sort by the reranker scores, or a
+	// reranker would change the numbers without changing which k hits reach the
+	// prompt. llmRerank already returns the LLM's preferred order, so preserve
+	// it instead of re-sorting on the untouched vector scores.
+	if cfg.RerankType != config.RerankLLM {
+		sortByScore(out)
+	}
 	if cfg.RerankTopN > 0 && cfg.RerankTopN < len(out) {
 		out = out[:cfg.RerankTopN]
 	}
 	rankHits(out)
 	return out, nil
+}
+
+// sigmoid maps an unbounded cross-encoder logit monotonically into (0, 1).
+// It is computed in a numerically stable form for large negative values.
+func sigmoid(x float64) float64 {
+	if x >= 0 {
+		return 1 / (1 + math.Exp(-x))
+	}
+	e := math.Exp(x)
+	return e / (1 + e)
+}
+
+func clamp01(x float64) float64 {
+	if x < 0 {
+		return 0
+	}
+	if x > 1 {
+		return 1
+	}
+	return x
 }
 
 // aikitRerank runs a locally loaded cross-encoder model. An explicit

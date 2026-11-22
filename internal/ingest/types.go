@@ -18,6 +18,14 @@ type Options struct {
 	ExcludeDir   []string
 	MaxFileBytes int64
 	MaxPDFPages  int
+	// SectionSize is the rune cap for one structured section (a Markdown
+	// heading, a CSV row group, an HTML heading, a PDF page or a DOCX section).
+	// Structured strategies use it instead of ChunkSize; a zero value falls
+	// back to ChunkSize so callers that never set it keep the legacy behaviour.
+	SectionSize int
+	// ChunkStrategy selects the chunker: "auto" uses the per-extension registry
+	// and "fixed" forces the legacy single-size splitter for every format.
+	ChunkStrategy string
 	// TokenCounter, when non-nil, caps chunk bodies by the embedder's real
 	// token limit. The local hashing embedder leaves it nil and keeps the
 	// existing rune-based chunking.

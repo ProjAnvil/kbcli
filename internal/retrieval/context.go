@@ -63,26 +63,48 @@ func trimToBudget(parts []string, budget int) []string {
 	return kept
 }
 
-// formatSources renders ranked evidence as numbered citations for the agent
-// prompt. Porto caps each citation separately before the global budget runs.
-func formatSources(hits []index.Hit, perChunk int) string {
+// formatCitationParts returns one independent part per citation. Keeping
+// citations as separate prompt parts lets TrimToBudget drop whole trailing
+// snippets instead of slicing a numbered passage mid-way, which used to leave
+// dangling [n] markers in the evidence block.
+func formatCitationParts(hits []index.Hit, numbers []int, perChunk int) []string {
 	if len(hits) == 0 {
-		return "No knowledge base passages available."
+		return nil
 	}
 	if perChunk <= 0 {
 		perChunk = 800
 	}
-	var b strings.Builder
+	parts := make([]string, 0, len(hits))
 	for i, h := range hits {
-		if i > 0 {
-			b.WriteString("\n\n")
+		n := i + 1
+		if i < len(numbers) && numbers[i] > 0 {
+			n = numbers[i]
 		}
-		fmt.Fprintf(&b, "[%d] %s score=%.3f\n", i+1, h.Chunk.Source, h.Score)
+		var b strings.Builder
+		fmt.Fprintf(&b, "[%d] %s score=%.3f\n", n, h.Chunk.Source, h.Score)
 		body := h.Chunk.Body
 		if body == "" {
 			body = h.Chunk.Text
 		}
 		b.WriteString(truncateRunes(body, perChunk))
+		parts = append(parts, b.String())
 	}
-	return b.String()
+	return parts
+}
+
+// formatCitations joins per-citation parts into one evidence block. numbers
+// carries stable 1-based citation IDs from the agent's citation ledger; a nil
+// or short slice falls back to positional numbering.
+func formatCitations(hits []index.Hit, numbers []int, perChunk int) string {
+	parts := formatCitationParts(hits, numbers, perChunk)
+	if len(parts) == 0 {
+		return "No knowledge base passages available."
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// formatSources renders ranked evidence as numbered citations for the agent
+// prompt. Porto caps each citation separately before the global budget runs.
+func formatSources(hits []index.Hit, perChunk int) string {
+	return formatCitations(hits, nil, perChunk)
 }

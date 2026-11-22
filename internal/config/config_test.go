@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,6 +71,137 @@ func TestChunkingLangChainDefaults(t *testing.T) {
 		if !found {
 			t.Errorf("%q must be index affecting, got %v", want, keys)
 		}
+	}
+}
+
+func TestPerExtensionChunkingDefaults(t *testing.T) {
+	d := Default()
+	if d.ChunkSize != 4000 || d.ChunkOverlap != 200 {
+		t.Fatalf("plain-text defaults = %d/%d, want 4000/200", d.ChunkSize, d.ChunkOverlap)
+	}
+	if d.SectionSize != 1000 {
+		t.Fatalf("SectionSize = %d, want 1000", d.SectionSize)
+	}
+	if d.ChunkStrategy != ChunkStrategyAuto {
+		t.Fatalf("ChunkStrategy = %q, want %q", d.ChunkStrategy, ChunkStrategyAuto)
+	}
+	if d.CandidateK != 40 {
+		t.Fatalf("CandidateK = %d, want 40", d.CandidateK)
+	}
+	if d.SetupDone {
+		t.Fatal("SetupDone must default to false so the first-run wizard appears")
+	}
+	if err := d.Validate(); err != nil {
+		t.Fatalf("default config invalid: %v", err)
+	}
+
+	keys := IndexAffectingKeys()
+	for _, want := range []string{"section_size", "chunk_strategy"} {
+		found := false
+		for _, k := range keys {
+			if k == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%q must be index affecting, got %v", want, keys)
+		}
+	}
+	for _, mustNotAffect := range []string{"candidate_k", "setup_done"} {
+		for _, k := range keys {
+			if k == mustNotAffect {
+				t.Errorf("%q must not be index affecting", mustNotAffect)
+			}
+		}
+	}
+}
+
+func TestChunkerVersionInvalidatesIndex(t *testing.T) {
+	before, after := Default(), Default()
+	after.SectionSize = 700
+	if got := IndexAffectingChanges(before, after); len(got) != 1 || got[0] != "section_size" {
+		t.Fatalf("section_size drift = %v, want [section_size]", got)
+	}
+	after = Default()
+	after.ChunkStrategy = ChunkStrategyFixed
+	if got := IndexAffectingChanges(before, after); len(got) != 1 || got[0] != "chunk_strategy" {
+		t.Fatalf("chunk_strategy drift = %v, want [chunk_strategy]", got)
+	}
+	sig := before.IndexSignature()
+	for _, want := range []string{"section_size=1000", "chunk_strategy=auto", "chunker=" + ChunkerVersion} {
+		if !strings.Contains(sig, want) {
+			t.Errorf("IndexSignature %q missing %q", sig, want)
+		}
+	}
+	// CandidateK is query-time only: changing it must not report drift.
+	after = Default()
+	after.CandidateK = 80
+	if got := IndexAffectingChanges(before, after); len(got) != 0 {
+		t.Fatalf("candidate_k must not invalidate the index, got %v", got)
+	}
+	if got := IndexSignatureChanges(sig, after); len(got) != 0 {
+		t.Fatalf("candidate_k must not change the signature drift, got %v", got)
+	}
+}
+
+func TestNewFieldsValidateAndRoundTrip(t *testing.T) {
+	c := Default()
+	for _, tc := range []struct {
+		key, value string
+	}{
+		{"section_size", "1400"},
+		{"candidate_k", "80"},
+		{"chunk_strategy", ChunkStrategyFixed},
+	} {
+		if err := c.SetField(tc.key, tc.value); err != nil {
+			t.Fatalf("SetField(%q, %q): %v", tc.key, tc.value, err)
+		}
+		if got, err := c.GetField(tc.key); err != nil || fmt.Sprint(got) != tc.value {
+			t.Fatalf("GetField(%q) = %v, %v; want %q", tc.key, got, err, tc.value)
+		}
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("edited config invalid: %v", err)
+	}
+	bad := Default()
+	for _, tc := range []struct {
+		key, value string
+	}{
+		{"chunk_strategy", "magic"},
+		{"section_size", "0"},
+		{"candidate_k", "0"},
+	} {
+		bad = Default()
+		if err := bad.SetField(tc.key, tc.value); err == nil {
+			t.Errorf("SetField(%q, %q) must fail", tc.key, tc.value)
+		}
+	}
+}
+
+func TestPartialFileAppliesNewDefaults(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, DirName)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte("api_key: sk-existing\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.APIKey != "sk-existing" {
+		t.Fatalf("api_key = %q", cfg.APIKey)
+	}
+	if cfg.SectionSize != 1000 || cfg.CandidateK != 40 || cfg.ChunkStrategy != ChunkStrategyAuto {
+		t.Fatalf("new defaults not applied to a partial file: %+v", cfg)
+	}
+	// A user with an existing key must not be nagged by the wizard.
+	if cfg.SetupDone {
+		t.Fatal("setup_done must not be forced true for an existing config")
 	}
 }
 

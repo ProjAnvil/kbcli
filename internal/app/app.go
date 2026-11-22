@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -144,15 +146,27 @@ func openSession(cfg *config.Config, root string) *session.Store {
 	return openSessionKeyed(cfg, root, "")
 }
 
+// openSessionQuiet is the alt-screen-safe variant used while the TUI is
+// running. Writing to stderr at that point corrupts a rendered row.
+func openSessionQuiet(cfg *config.Config, root string) *session.Store {
+	return openSessionKeyedQuiet(cfg, root, "", true)
+}
+
 // openSessionKeyed derives the session file key from root and key. An empty
 // key keeps the original per-workspace session identity.
 func openSessionKeyed(cfg *config.Config, root, key string) *session.Store {
+	return openSessionKeyedQuiet(cfg, root, key, false)
+}
+
+func openSessionKeyedQuiet(cfg *config.Config, root, key string, quiet bool) *session.Store {
 	if !cfg.SessionEnabled {
 		return nil
 	}
 	dir, err := config.SessionsDir()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "kbcli: session directory: %v\n", err)
+		if !quiet {
+			fmt.Fprintf(os.Stderr, "kbcli: session directory: %v\n", err)
+		}
 		return nil
 	}
 	sessionKey := root
@@ -173,7 +187,9 @@ func openSessionKeyed(cfg *config.Config, root, key string) *session.Store {
 		Complete:            agent.NewCompletion(cfg),
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "kbcli: session memory unavailable: %v\n", err)
+		if !quiet {
+			fmt.Fprintf(os.Stderr, "kbcli: session memory unavailable: %v\n", err)
+		}
 		return nil
 	}
 	return st
@@ -391,6 +407,8 @@ func (a *App) build(ctx context.Context, root, out string, on func(Progress)) (i
 	opts := ingest.DefaultOptions()
 	opts.ChunkSize = a.cfg.ChunkSize
 	opts.ChunkOverlap = a.cfg.ChunkOverlap
+	opts.SectionSize = a.cfg.SectionSize
+	opts.ChunkStrategy = a.cfg.ChunkStrategy
 	if tc, ok := embed.TokenCounterOf(emb); ok {
 		opts.TokenCounter = tc
 		fmt.Fprintf(os.Stderr, "kbcli: %s caps chunks at %d tokens; chunk_size=%d is bounded at split time\n", a.cfg.Embedder, tc.MaxTokens(), a.cfg.ChunkSize)
@@ -502,6 +520,8 @@ func (a *App) Update(ctx context.Context, target string) (int, error) {
 	opts := ingest.DefaultOptions()
 	opts.ChunkSize = a.cfg.ChunkSize
 	opts.ChunkOverlap = a.cfg.ChunkOverlap
+	opts.SectionSize = a.cfg.SectionSize
+	opts.ChunkStrategy = a.cfg.ChunkStrategy
 	if tc, ok := embed.TokenCounterOf(emb); ok {
 		opts.TokenCounter = tc
 	}
@@ -731,6 +751,100 @@ func overrideValue(v any) any {
 	return v
 }
 
+// setupProbeTimeout bounds the first-run connectivity check so an unreachable
+// endpoint never blocks the TUI for long.
+const setupProbeTimeout = 5 * time.Second
+
+// setupProbeEndpoint is replaceable in tests to keep the wizard offline. Any
+// HTTP response counts as reachable: a 401 or 404 still proves the host and
+// port answer, while a transport error means the endpoint is unusable.
+var setupProbeEndpoint = func(baseURL string, timeout time.Duration) error {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if base == "" {
+		return errors.New("empty base_url")
+	}
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Get(base)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+	return nil
+}
+
+// SetupApply persists the first-run wizard draft and rebuilds every object
+// that captured the old config snapshot. Without the rebuild, buildModel
+// would keep the empty API key for the rest of the session.
+//
+// skipCheck bypasses the connectivity probe. The returned status is shown in
+// the chat pane; a non-nil error means persistence failed and the wizard must
+// stay open.
+func (a *App) SetupApply(draft *config.Config, skipCheck bool) (string, error) {
+	if draft == nil {
+		return "", errors.New("app: nil setup draft")
+	}
+	draft.Normalize()
+	if err := draft.Validate(); err != nil {
+		return "", fmt.Errorf("app: validate setup: %w", err)
+	}
+
+	lang := i18n.Parse(draft.Language)
+	status := ""
+	if !skipCheck {
+		if err := setupProbeEndpoint(draft.BaseURL, setupProbeTimeout); err != nil {
+			status = lang.T("setup.offline_warn")
+		}
+	}
+	if status == "" && !skipCheck {
+		status = lang.T("setup.saved_prefix")
+	}
+	if skipCheck {
+		status = lang.T("setup.skipped")
+	}
+
+	if err := draft.Save(); err != nil {
+		return "", fmt.Errorf("app: save setup config: %w", err)
+	}
+	a.mu.Lock()
+	a.global = draft.Clone()
+	a.cfg = draft.Clone()
+	a.mu.Unlock()
+
+	if err := a.rebuildAfterSetup(); err != nil {
+		return "", err
+	}
+	return status, nil
+}
+
+// rebuildAfterSetup swaps in a new agent, retriever and session built from the
+// updated config. With no index there is nothing to rebuild; the next :index
+// builds those objects from the new cfg anyway.
+func (a *App) rebuildAfterSetup() error {
+	a.mu.RLock()
+	store, indexPath, root := a.store, a.indexPath, a.root
+	a.mu.RUnlock()
+	if store == nil {
+		return nil
+	}
+	a.mu.Lock()
+	a.sess = openSessionQuiet(a.cfg, root)
+	a.mu.Unlock()
+	emb, err := a.ensureEmbedder()
+	if err != nil {
+		return fmt.Errorf("app: rebuild embedder: %w", err)
+	}
+	return a.install(root, indexPath, emb, store)
+}
+
+// NeedsSetup reports whether the first-run API key wizard should open.
+// A configured key or an explicitly dismissed wizard suppresses it.
+func (a *App) NeedsSetup() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return strings.TrimSpace(a.cfg.APIKey) == "" && !a.cfg.SetupDone
+}
+
 // TUI starts the two-pane chat interface.
 func (a *App) TUI() error {
 	a.mu.RLock()
@@ -761,6 +875,8 @@ func (a *App) TUI() error {
 		OnCommand:   a.HandleCommand,
 		EnsureModel: ensureModel,
 		NewWindow:   a.NewWindow,
+		SetupNeeded: a.NeedsSetup(),
+		SetupApply:  a.SetupApply,
 		Refresh: func() (index.Store, agent.Answerer) {
 			a.mu.RLock()
 			defer a.mu.RUnlock()

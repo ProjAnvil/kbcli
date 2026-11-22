@@ -8,7 +8,7 @@
 
 用一个 Go 二进制文件即可与本地文档目录对话——无服务端、无向量数据库、无云账号。
 
-`kbcli` 把一个目录变成一个可携带的 `.kbvec` 向量文件，并打开三视图终端界面：两栏聊天、设置界面、索引确认对话框。默认即可离线使用。默认 embedder 是零依赖的进程内哈希模型。聊天后端不可达时，答案会退化为带 `[n]` 引用的确定性抽取式答案。索引永远是显式命令。启动时不扫描、不建索引。
+`kbcli` 把一个目录变成一个可携带的 `.kbvec` 向量文件，并打开四视图终端界面：两栏聊天、设置界面、索引确认对话框，以及首次运行的 API key 向导。默认即可离线使用。默认 embedder 是零依赖的进程内哈希模型。聊天后端不可达时，答案会退化为带 `[n]` 引用的确定性抽取式答案。索引永远是显式命令。启动时不扫描、不建索引。
 
 聊天视图示意图（这是示意图，不是截图）：
 
@@ -35,13 +35,14 @@
 
 - 每个目录一个可携带的 `.kbvec`：magic 头 `KBCLI\x00`、gob 载荷、经 `os.Rename` 原子替换。旧版 `.kbcli.kbvec` 仍可加载。embedder 域隔离会拒绝加载由不同 embedder 构建的索引。
 - 两种 embedder，均为 384 维并做 L2 归一化：零依赖的进程内哈希模型（FNV-1a 词一元语法 + 字符 3-gram），以及可选的纯 Go `rembed` 神经模型。
-- 支持 OpenAI 兼容 Chat Completions 与 Anthropic Messages API 两类聊天后端（`chat_provider`、`base_url`、`model`、`api_key`）。后端不可达时，答案退化为依据排名最高证据生成的抽取式答案，并带 `[n]` 引用。
-- 源自 Porto 的检索：`vector` / `bm25` / 加权 RRF `hybrid`（k=60），**默认启用本地 `aikit` cross-encoder 重排**（无需服务、Python 或 cgo）；外部 HTTP `cross_encoder` 与 `llm` 重排仍可配置。`hyde` / `multi_query` / `decomposition` / `step_back` 查询变换、指代消解 condense 门，以及 kbcli 自有的 `min_score` 与 `context_expand` 同样可用。
-- 源自 Porto 的意图路由：`direct` 跳过检索，`quick_rag` 直接检索原问题，`deep_rag` 走完整管线。意图 provider 默认继承全局配置。
-- 三个全屏视图，基于 `bubbletea` + `bubbles` + `lipgloss`。主题跟随终端背景（OSC 11 或 `COLORFGBG`）：两栏聊天（左侧会话、右侧排名证据；`ctrl+]` 收起证据栏）、主从式设置界面（分组栏 + 详情栏）、索引确认对话框。
+- 支持 OpenAI 兼容 Chat Completions 与 Anthropic Messages API 两类聊天后端（`chat_provider`、`base_url`、`model`、`api_key`）。首次运行的 TUI 向导会收集协议、遮蔽显示的 API key、接口地址与模型，做一次短连通性检查，并就地重建 agent；按 `ctrl+s` 可跳过，供离线使用。后端不可达时，答案退化为依据排名最高证据生成的抽取式答案，并带 `[n]` 引用。
+- 源自 Porto 的检索：`vector` / `bm25` / 加权 RRF `hybrid`（k=60），**默认启用本地 `aikit` cross-encoder 重排**（无需服务、Python 或 cgo）。较宽的 `candidate_k` 候选池（默认 40）先喂给重排，`min_score` 在归一化后的重排分数上执行，改写问题的同时还会用原始问题再召回一次；grounded prompt 与 `kb_search` 共用一套引用编号。检索为空或失败时明确拒答，而不是凭空编造。外部 HTTP `cross_encoder` 与 `llm` 重排仍可配置。`hyde` / `multi_query` / `decomposition` / `step_back` 查询变换、指代消解 condense 门，以及 kbcli 自有的 `context_expand` 同样可用。
+- 源自 Porto 的意图路由：`direct` 跳过检索，`quick_rag` 直接检索原问题，`deep_rag` 走完整管线。意图 provider 默认继承全局配置。`why?` 之类的短问不再绕过知识库。
+- 结构化切分：Strategy + Registry 按文件后缀选择切分器（Markdown 标题、CSV 行组、HTML 标题、PDF 页、DOCX 章节），使一个分块尽量落在同一节内；`chunk_strategy: fixed` 可恢复旧版单一尺寸切分。
+- 四个全屏视图，基于 `bubbletea` + `bubbles` + `lipgloss`。主题跟随终端背景（OSC 11 或 `COLORFGBG`）：两栏聊天（左侧会话、右侧排名证据；`ctrl+]` 收起证据栏）、主从式设置界面（分组栏 + 详情栏）、索引确认对话框，以及首次运行的 API key 向导。
 - 双语界面与提示词，英文 / 简体中文，由 `language`（`en`|`zh`）选择。英文与原有界面逐字节一致。
 - 每工作区会话记忆：`~/.kbcli/sessions/<sha256(root)[:16]>.json`（模式 `0600`）。含 4 类事实（`user_decision`、`user_preference`、`project_context`、`open_question`）、Jaccard 去重、上限淘汰、历史压缩，每轮注入。
-- 设置目录恰好有 46 个字段，分 7 组（Foundation、Ingestion、Retrieval、Rerank、Query Transform、Intent、Session）。其中恰好 21 个是数值型（`FieldInt` 或 `FieldFloat`）。支持稀疏的工作区覆盖，INDEX STALE 横幅由 version-2 构建签名驱动。
+- 设置目录恰好有 49 个字段，分 7 组（Foundation、Ingestion、Retrieval、Rerank、Query Transform、Intent、Session）。其中恰好 23 个是数值型（`FieldInt` 或 `FieldFloat`）。支持稀疏的工作区覆盖，INDEX STALE 横幅由 version-2 构建签名驱动。
 
 ## 安装
 
@@ -66,7 +67,7 @@ make install    # go install ./cmd/kbcli
 解压后从解压目录运行二进制（请将示例名称换成你的版本与平台）：
 
 ```sh
-tar -xzf kbcli-full-v0.2.0-darwin-arm64.tar.gz   # Windows：unzip kbcli-full-v0.2.0-windows-amd64.zip
+tar -xzf kbcli-full-v0.3.0-darwin-arm64.tar.gz   # Windows：unzip kbcli-full-v0.3.0-windows-amd64.zip
 ./kbcli
 ```
 
@@ -94,7 +95,7 @@ sha256sum -c checksums.txt --ignore-missing
 使用 `go install` 直接安装已发布的版本：
 
 ```sh
-go install github.com/ProjAnvil/kbcli/cmd/kbcli@v0.2.0
+go install github.com/ProjAnvil/kbcli/cmd/kbcli@v0.3.0
 # 或
 go install github.com/ProjAnvil/kbcli/cmd/kbcli@latest
 ```
@@ -116,14 +117,16 @@ kbcli config set api_key sk-...
 
 启动时不建索引。当前目录存在 `.kbvec` 时，聊天立即开始。否则聊天栏会提示输入 `:index <dir>`，或运行 `kbcli index <dir>`。启动时不做任何扫描，也不向上级目录查找。
 
-CLI 子命令：`index`、`reindex`、`update`、`config`、`settings`、`search`、`version`。TUI 内命令：`:reindex`、`:update`、`:settings`、`:stale`、`:clear`、`:help`、`:index`、`:q`（输入行为空时也可按 `q`）。`q`、`esc`、`ctrl+c` 均可退出。
+CLI 子命令：`index`、`reindex`、`update`、`config`、`settings`、`search`、`version`。TUI 内命令：`:reindex`、`:update`、`:settings`、`:stale`、`:clear`、`:help`、`:index`、`:q`（输入行为空时也可按 `q`）。`q` 和 `ctrl+c` 退出；`esc` 用于取消正在生成的回答，不再退出。
+
+回答以流式方式逐字进入聊天栏。从按下 `enter` 到首个 token 出现之间（含意图路由、检索、重排与生成），思考图标会持续转动。这一过程中的任意时刻按 `esc` 即可取消整个请求；被取消的请求不会把助手回复或降级文案写入会话。工具轮的前导文字会从实时文本中清除，只有最终回答那一轮会进入聊天记录。
 
 ## 配置
 
 全局设置存放于 `~/.kbcli/config.yaml`（模式 `0600`）。工作区覆盖是稀疏的，存放于 `~/.kbcli/settings.json`：工作区继承 `config.yaml`，只覆盖你设定的键。
 
 ```sh
-kbcli config keys              # 全部 46 个键，含分组、类型与范围
+kbcli config keys              # 全部 49 个键，含分组、类型与范围
 kbcli config list              # 生效值，密钥已遮蔽
 kbcli config get top_k
 kbcli config set top_k 9
@@ -134,19 +137,32 @@ kbcli settings set top_k 9     # 一个稀疏的工作区覆盖
 
 `chat_provider` 选择聊天 API 协议：`openai`（默认，OpenAI 兼容的 Chat Completions）或 `anthropic`（Anthropic Messages API）。`base_url` 必须指向与所选协议兼容的接口。使用 Anthropic 官方 API 时，请将 `base_url` 留空，或设为 `https://api.anthropic.com/v1`——agent 会自动回退到与协议匹配的默认地址（默认的 OpenAI `base_url` 仅适用于 `openai`）。
 
+### 首次运行的 API key 设置
+
+当未配置 `api_key` 且向导尚未被跳过时，kbcli 会在进入聊天前打开全屏向导。依次填写 `chat_provider`（左右键切换，`enter` 确认）、遮蔽显示的 `api_key`、`base_url` 与 `model`；`enter` 前进，`esc` 返回，最后一步按 `enter` 保存。kbcli 会校验配置、对 `base_url` 做一次 5 秒 HTTP 探测（任何 HTTP 响应都视为可达），以 `0600` 模式写入 `~/.kbcli/config.yaml`，并重建 agent、retriever 与会话，使新密钥无需重启即可生效。探测失败只会追加一条警告，配置仍会保存。`ctrl+s`（第一步也可按 `s`）跳过向导并记录 `setup_done: true`，保持完全离线。也可以直接用 `kbcli config set api_key sk-...` 让向导不再出现。
+
 重排**默认开启**：`rerank_enabled: true`、`rerank_type: aikit`、`rerank_model: ms-marco-MiniLM-L-6-v2`。当 `rerank_model_path` 为空时，模型位于受管目录 `~/.kbcli/model/ms-marco-MiniLM-L-6-v2/`。普通发行版首次运行时，kbcli 会检查该目录；若缺少五个模型文件，会打开带 ASCII 标志和字节级进度条的启动界面，同时下载它们（约 92 MB）。下载或复制完成前无法开始聊天。将 `rerank_model_path` 设为已有的本地模型目录即可跳过该界面。详见[本地 cross-encoder 重排](#本地-cross-encoder-重排)，以及外部 HTTP 与 LLM 选项。
 
 `intent_mode` 选择路由模式：`off`、`binary`（`direct` 或 `rag`）、`adaptive`（`direct`、`quick_rag`、`deep_rag`）。默认值为 `adaptive`。`direct` 跳过检索，只做简短回答。`quick_rag` 用原问题检索，不做事指消解与查询变换。`deep_rag` 走完整管线。
 
 意图分类器由 `intent_provider`、`intent_api_key`、`intent_base_url`、`intent_model` 配置。默认的 `intent_provider: inherit` 复用全局聊天协议、接口、模型与密钥。其余三个字段留空时继承全局值。分类器不可用时回退到关键词规则，再回退到完整 RAG 路径。
 
-[设置界面](#settings-screen)（`:settings`）在 TUI 中编辑同一份目录。修改会影响索引的键——`chunk_size`、`chunk_overlap`、`embedder`、`embed_model`——会记入 version-2 构建签名。加载时发现偏差会显示 **INDEX STALE** 横幅。运行 `:reindex`（或 `kbcli reindex`）重建索引。
+[设置界面](#settings-screen)（`:settings`）在 TUI 中编辑同一份目录。修改会影响索引的键——`chunk_size`、`chunk_overlap`、`section_size`、`chunk_strategy`、`embedder`、`embed_model`——会记入构建签名（现在还带 `per-ext-v1` 切分器版本）。加载时发现偏差会显示 **INDEX STALE** 横幅。运行 `:reindex`（或 `kbcli reindex`）重建索引。`candidate_k` 等查询时参数不会让索引失效。
 
-### 分块大小与重叠
+### 按文件类型切分
 
-kbcli 的默认值现在与 LangChain 的 `RecursiveCharacterTextSplitter` 字符切分默认值一致：`chunk_size: 4000`、`chunk_overlap: 200`。kbcli 按 **Go rune 计数**，即 Unicode 码点，相当于 LangChain 中 Python `len()` 的计数方式，而非 token。
+按 4000 rune 硬切对纯文本没问题，但会把结构化文件里互不相关的章节混进同一个分块。默认的 `chunk_strategy: auto` 通过 Strategy + Registry 按后缀选择结构化切分器；设为 `fixed` 可对所有格式强制使用旧版单一尺寸切分。
 
-也存在基于 token 的切分器，它们使用特定模型的 tokenizer；kbcli 的 rune 设置是面向用户、与模型无关的对应方式。如果选择 `embedder: rembed`，kbcli 还会在切分时把分块限制在该模型的 token 上限内——rune 配置仍是面向用户的设置。
+| 后缀 | 切分策略 | 尺寸上限 |
+|---|---|---|
+| `.md`、`.markdown`、`.mdx` | Markdown 标题（h1–h4），标题路径会注入嵌入文本 | `section_size` |
+| `.txt`、`.text` | 纯文本递归切分 | `chunk_size` |
+| `.csv` | 行组 | `section_size` |
+| `.html`、`.htm` | HTML 标题 | `section_size` |
+| `.pdf` | 单页 | `section_size` |
+| `.docx` | 转换后的 Markdown 章节 | `section_size` |
+
+`chunk_size: 4000` 与 `chunk_overlap: 200` 仍与 LangChain 的 `RecursiveCharacterTextSplitter` 默认值一致，但 `chunk_size` 现在**只限制纯文本分块**。结构化格式按节由 `section_size` 限制（默认 1000 rune）；过长的节会被递归切分，而不是与相邻节合并。kbcli 按 **Go rune 计数**，即 Unicode 码点，相当于 Python 的 `len()`，而非 token。如果选择 `embedder: rembed`，切分时还会把分块限制在该模型的 token 上限内。
 
 ### 本地 cross-encoder 重排
 
@@ -176,7 +192,7 @@ huggingface-cli download cross-encoder/ms-marco-MiniLM-L-6-v2 \
 
 所有重排设置都只在查询时生效，不会让 `.kbvec` 索引失效。加载或打分失败时会 fail open，保留原始检索顺序。
 
-`chunk_size` 与 `chunk_overlap` 都会影响索引：修改任一项都会使 `.kbvec` 索引失效，必须重建索引（`:reindex` / `kbcli reindex`）。请用 recall@k 指导调整。
+`chunk_size`、`chunk_overlap`、`section_size` 与 `chunk_strategy` 都会影响索引：修改任一项都会使 `.kbvec` 索引失效，必须重建索引（`:reindex` / `kbcli reindex`）。`candidate_k` 只在查询时生效。请用 recall@k 指导调整。
 
 背景参考：[LangChain text splitters](https://python.langchain.com/docs/concepts/text_splitters/)。
 
@@ -198,9 +214,11 @@ huggingface-cli download cross-encoder/ms-marco-MiniLM-L-6-v2 \
 
 每个窗口各自保存会话、证据与会话记忆。前缀 750 毫秒后超时。前缀后的按键不会进入输入框。`ctrl+c` 仍然退出。
 
+切换标签不会中断正在运行的请求。标签栏为每个标签预留一个固定字符位用于转动图标：即使该标签在后台运行，也会持续显示转圈，因此请求开始或结束时标签栏宽度不会跳动。切回该标签后按 `esc` 即可取消。
+
 ### 设置界面
 
-`:settings` 打开主从视图：左侧为分组栏，右侧为详情栏。目录恰好有 **46 个字段**、**7 组**——Foundation、Ingestion、Retrieval、Rerank、Query Transform、Intent、Session——其中恰好 **21** 个为数值型（`FieldInt` 或 `FieldFloat`）。只有你标记的字段会写成稀疏覆盖，其余字段保留全局值。当已加载索引的构建设置不同时，顶部显示 **INDEX STALE** 横幅。按 `r`（或 `:reindex`）就地重建。
+`:settings` 打开主从视图：左侧为分组栏，右侧为详情栏。目录恰好有 **49 个字段**、**7 组**——Foundation、Ingestion、Retrieval、Rerank、Query Transform、Intent、Session——其中恰好 **23** 个为数值型（`FieldInt` 或 `FieldFloat`）。只有你标记的字段会写成稀疏覆盖，其余字段保留全局值。当已加载索引的构建设置不同时，顶部显示 **INDEX STALE** 横幅。按 `r`（或 `:reindex`）就地重建。
 
 ### 嵌入模型与重建索引
 
@@ -222,7 +240,7 @@ internal/retrieval/ BM25, weighted RRF, rerank, query transforms, condense gate
 internal/agent/    OpenAI-compatible chat, evidence, fallback answers
 internal/session/  per-workspace memory and facts
 internal/i18n/     English / Simplified Chinese catalogs
-internal/tui/      three-view bubbletea TUI (chat, settings, confirmation)
+internal/tui/      bubbletea TUI (chat, settings, confirmation, setup wizard)
 internal/cli/      cobra commands
 internal/app/      orchestration shared by CLI and TUI
 ```

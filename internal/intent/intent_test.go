@@ -38,6 +38,18 @@ func TestRuleRouteDeepAndQuick(t *testing.T) {
 	}
 }
 
+// Short English and Chinese questions must still reach the knowledge base.
+// A previous length-based shortcut classified them as direct smalltalk and
+// silently skipped retrieval and grounding.
+func TestShortQuestionsReachRAG(t *testing.T) {
+	for _, msg := range []string{"why?", "how?", "what?", "when?", "它呢？", "为什么？"} {
+		got := classify(config.IntentAdaptive, msg, nil)
+		if got.Intent == Direct {
+			t.Fatalf("%q was routed direct: %+v", msg, got)
+		}
+	}
+}
+
 func TestRuleRouteBinary(t *testing.T) {
 	got := classify(config.IntentBinary, "chunk_size 的默认值是多少", nil)
 	if got.Intent != RAG {

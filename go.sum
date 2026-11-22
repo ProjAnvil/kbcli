@@ -49,8 +49,8 @@ github.com/muesli/cancelreader v0.2.2 h1:3I4Kt4BQjOR54NavqnDogx/MIoWBFa0StPA8ELU
 github.com/muesli/cancelreader v0.2.2/go.mod h1:3XuTXfFS2VjM+HTLZY9Ak0l6eUKfijIfMUZ4EgX0QYo=
 github.com/muesli/termenv v0.16.0 h1:S5AlUN9dENB57rsbnkPyfdGuWIlkmzJjbFf0Tf5FWUc=
 github.com/muesli/termenv v0.16.0/go.mod h1:ZRfOIKPFDYQoDFF4Olj7/QJbW60Ol/kL1pU3VfY/Cnk=
-github.com/projanvil/langchain-golang v0.14.1 h1:5Jw8EUmMBP5kSoiXwebqeqMHu/IDYNzSKPUDWrboh7g=
-github.com/projanvil/langchain-golang v0.14.1/go.mod h1:JGzZlwer2R1kcM5Ll6TFNbc5Z0txLBg1m/EEKmF0C/I=
+github.com/projanvil/langchain-golang v0.14.3 h1:+Iqklg9BXoaSZfOb9YMlQlagyIoXCXu57BkrzEqwqRk=
+github.com/projanvil/langchain-golang v0.14.3/go.mod h1:JGzZlwer2R1kcM5Ll6TFNbc5Z0txLBg1m/EEKmF0C/I=
 github.com/rivo/uniseg v0.4.7 h1:WUdvkW8uEhrYfLC4ZzdpI2ztxP1I582+49Oc5Mq64VQ=
 github.com/rivo/uniseg v0.4.7/go.mod h1:FN3SvrM+Zdj16jyLfmOkMNblXMcoc8DfTHruCPUcx88=
 github.com/rostamlabs/rembed v0.3.0 h1:V0KjiI69fgks2xZWj3TSTuPpAgvH2JMqsjB5UG0y8zY=

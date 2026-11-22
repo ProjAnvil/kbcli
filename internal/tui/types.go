@@ -71,6 +71,12 @@ type ReindexFunc func(progress func(IndexProgress)) (int, error)
 // PreflightFunc re-scans a directory when the user chooses a different root.
 type PreflightFunc func(root string) (scan.Report, error)
 
+// SetupApplyFunc persists the first-run wizard draft and rebuilds the live
+// agent so the new API key takes effect without restarting kbcli. skipCheck
+// bypasses the short endpoint probe (used by the skip action). The returned
+// status is shown in the chat pane; a non-nil error keeps the wizard open.
+type SetupApplyFunc func(draft *config.Config, skipCheck bool) (string, error)
+
 // Options configures a TUI session.
 type Options struct {
 	Config    *config.Config
@@ -79,6 +85,11 @@ type Options struct {
 	Sink      agent.Sink
 	IndexPath string
 	OnCommand CommandFunc
+	// SetupNeeded opens the full-screen first-run API key wizard before any
+	// other screen. It is true when no API key is configured and setup has
+	// not been dismissed. SetupApply must be non-nil whenever SetupNeeded is.
+	SetupNeeded bool
+	SetupApply  SetupApplyFunc
 	// Refresh returns the live store and answerer. The TUI calls it after a
 	// command rebuilds the index so later questions use the new vectors.
 	Refresh func() (index.Store, agent.Answerer)

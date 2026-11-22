@@ -95,3 +95,14 @@ func rankHits(hits []index.Hit) {
 		hits[i].Rank = i + 1
 	}
 }
+
+// sortByScore orders hits by descending score. Ties break on chunk ID so the
+// order is deterministic across runs and platforms.
+func sortByScore(hits []index.Hit) {
+	sort.SliceStable(hits, func(i, j int) bool {
+		if hits[i].Score == hits[j].Score {
+			return hits[i].Chunk.ID < hits[j].Chunk.ID
+		}
+		return hits[i].Score > hits[j].Score
+	})
+}

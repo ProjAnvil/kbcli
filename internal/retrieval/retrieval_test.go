@@ -17,14 +17,16 @@ import (
 // fakeStore implements the full index.Store contract. Search returns a fixed
 // list so the vector side of the pipeline is deterministic.
 type fakeStore struct {
-	mu     sync.Mutex
-	chunks []index.Chunk
-	hits   []index.Hit
-	rev    uint64
-	root   string
-	sig    string
-	err    error
-	calls  int
+	mu      sync.Mutex
+	chunks  []index.Chunk
+	hits    []index.Hit
+	rev     uint64
+	root    string
+	sig     string
+	err     error
+	calls   int
+	lastK   int
+	queries []string
 }
 
 func (s *fakeStore) Add(cs []index.Chunk) error {
@@ -34,16 +36,32 @@ func (s *fakeStore) Add(cs []index.Chunk) error {
 	s.rev++
 	return nil
 }
-func (s *fakeStore) Search(_ string, _ int) ([]index.Hit, error) {
+func (s *fakeStore) Search(q string, k int) ([]index.Hit, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
+	s.lastK = k
+	s.queries = append(s.queries, q)
 	if s.err != nil {
 		return nil, s.err
 	}
 	out := make([]index.Hit, len(s.hits))
 	copy(out, s.hits)
 	return out, nil
+}
+
+// lastRequestedK and searchedQueries return snapshots so tests never read the
+// store while a search could still be running.
+func (s *fakeStore) lastRequestedK() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastK
+}
+
+func (s *fakeStore) searchedQueries() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.queries...)
 }
 func (s *fakeStore) Save(string) error                   { return nil }
 func (s *fakeStore) Sources() map[string]index.FileState { return map[string]index.FileState{} }
@@ -277,6 +295,186 @@ func TestMinScoreAndContextExpand(t *testing.T) {
 	}
 	if !foundExpansion {
 		t.Fatal("adjacent chunk expansion did not run")
+	}
+}
+
+// A production RAG pipeline fetches a broad candidate pool before reranking.
+// TopK must only bound the final evidence set, not the vector search itself.
+func TestCandidateKWidensVectorSearch(t *testing.T) {
+	chunks := []index.Chunk{}
+	hits := []index.Hit{}
+	for i := 0; i < 10; i++ {
+		c := mkChunk(string(rune('a'+i)), "docs.md", "body", i)
+		chunks = append(chunks, c)
+		hits = append(hits, index.Hit{Rank: i + 1, Score: 1 - float64(i)/20, Chunk: c})
+	}
+	cfg := config.Default()
+	cfg.RerankEnabled = false
+	cfg.CandidateK = 40
+	cfg.RetrievalMethod = config.RetrievalVector
+	store := &fakeStore{chunks: chunks, hits: hits, root: "/kb", rev: 1}
+	r, err := New(Options{Config: cfg, Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.Search(context.Background(), "question", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k := store.lastRequestedK(); k != 40 {
+		t.Fatalf("vector search k = %d, want candidate_k 40", k)
+	}
+	if len(got) != 4 {
+		t.Fatalf("final hits = %d, want top_k 4", len(got))
+	}
+}
+
+// min_score is applied after reranking, on the normalized 0..1 scale, so a
+// hit the reranker rescues is not discarded by a pre-rerank threshold.
+func TestMinScoreRunsAfterRerankNormalization(t *testing.T) {
+	chunks := []index.Chunk{
+		mkChunk("a", "a.md", "high", 0),
+		mkChunk("b", "b.md", "low", 0),
+		mkChunk("c", "c.md", "medium", 0),
+	}
+	// Install a fake cross-encoder whose raw logits are 0.9, -5, 0.5.
+	// sigmoid(-5) is far below the 0.5 threshold.
+	fake := &fakeAikitCE{scores: []float32{0.9, -5, 0.5}}
+	installFakeAikit(t, fake, nil)
+	cfg := config.Default()
+	cfg.RerankEnabled = true
+	cfg.RerankType = config.RerankAikit
+	cfg.RerankModelPath = "/models/cross-encoder"
+	cfg.RerankTopN = 10
+	cfg.MinScore = 0.5
+	cfg.CandidateK = 40
+	store := &fakeStore{chunks: chunks, hits: []index.Hit{
+		{Rank: 1, Score: 0.6, Chunk: chunks[0]},
+		{Rank: 2, Score: 0.6, Chunk: chunks[1]},
+		{Rank: 3, Score: 0.6, Chunk: chunks[2]},
+	}, root: "/kb", rev: 1}
+	r, err := New(Options{Config: cfg, Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.Search(context.Background(), "question", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, h := range got {
+		ids[h.Chunk.ID] = true
+		if h.Score < cfg.MinScore {
+			t.Fatalf("hit %q score %g is below min_score %g", h.Chunk.ID, h.Score, cfg.MinScore)
+		}
+	}
+	if !ids["a"] || !ids["c"] {
+		t.Fatalf("reranked hits a and c must survive, got %v", ids)
+	}
+	if ids["b"] {
+		t.Fatal("the negative-logit hit b must be filtered out")
+	}
+}
+
+// Context expansion adds neighbours as extra evidence. The old pipeline
+// appended them and then truncated back to k, silently dropping them.
+func TestContextExpandSurvivesFinalTake(t *testing.T) {
+	chunks := []index.Chunk{
+		mkChunk("a", "a.md", "primary", 0),
+		mkChunk("a2", "a.md", "adjacent", 1),
+		mkChunk("b", "b.md", "secondary", 0),
+	}
+	cfg := config.Default()
+	cfg.RerankEnabled = false
+	cfg.ContextExpand = 1
+	cfg.CandidateK = 40
+	store := &fakeStore{chunks: chunks, hits: []index.Hit{
+		{Rank: 1, Score: 0.9, Chunk: chunks[0]},
+		{Rank: 2, Score: 0.8, Chunk: chunks[2]},
+	}, root: "/kb", rev: 1}
+	r, err := New(Options{Config: cfg, Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.Search(context.Background(), "primary", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, h := range got {
+		if h.Chunk.ID == "a2" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expanded neighbour was truncated away: %+v", got)
+	}
+}
+
+// A condensed rewrite must not replace the verbatim query's recall. The
+// retriever runs a second search on the original question and fuses both.
+func TestCondenseRewriteKeepsOriginalQueryRecall(t *testing.T) {
+	chunks := []index.Chunk{mkChunk("a", "a.md", "retries", 0)}
+	cfg := config.Default()
+	cfg.RerankEnabled = false
+	cfg.CondenseEnabled = true
+	cfg.CandidateK = 40
+	store := &fakeStore{chunks: chunks, hits: []index.Hit{
+		{Rank: 1, Score: 0.8, Chunk: chunks[0]},
+	}, root: "/kb", rev: 1}
+	r, err := New(Options{Config: cfg, Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.SearchWithHistory(context.Background(), "what about it", 2,
+		[]Turn{{Role: "user", Content: "tell me about retries"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queries := store.searchedQueries()
+	if len(queries) != 2 {
+		t.Fatalf("searches = %d, want 2 (condensed + original): %v", len(queries), queries)
+	}
+	if queries[1] != "what about it" {
+		t.Fatalf("second search query = %q, want the verbatim question", queries[1])
+	}
+	if queries[0] == queries[1] {
+		t.Fatal("condensed rewrite did not produce a distinct query")
+	}
+}
+
+// Passing each citation as its own budget part means trimming drops whole
+// trailing snippets. A numbered passage must never be sliced mid-marker.
+func TestTrimToBudgetKeepsCitationNumbersIntact(t *testing.T) {
+	var hits []index.Hit
+	for i := 0; i < 6; i++ {
+		hits = append(hits, mkHit(string(rune('a'+i)), "doc.md", strings.Repeat("word ", 80), 1-float64(i)/10))
+	}
+	parts := []string{"system prompt", "Question:\nq", "Evidence:\n"}
+	parts = append(parts, FormatCitationParts(hits, nil, 400)...)
+	kept := TrimToBudget(parts, 700)
+	if len(kept) < 3 {
+		t.Fatalf("budget trimmed away the question: %v", kept)
+	}
+	seen := 0
+	for _, p := range kept[3:] {
+		if p == "" {
+			continue
+		}
+		if !strings.HasPrefix(p, "[") {
+			t.Fatalf("citation part lost its number: %q", p)
+		}
+		closing := strings.Index(p, "]")
+		if closing < 2 {
+			t.Fatalf("citation number was cut in half: %q", p)
+		}
+		seen++
+	}
+	if seen == 0 || seen > len(hits) {
+		t.Fatalf("kept %d citation parts out of %d", seen, len(hits))
+	}
+	if seen == len(hits) {
+		t.Fatal("budget did not trim any citation")
 	}
 }
 

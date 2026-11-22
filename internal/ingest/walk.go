@@ -37,13 +37,17 @@ func defaultExcludeDirs() []string {
 }
 
 func defaultOptions() Options {
+	// SectionSize is intentionally left at zero: sectionSize(opts) falls back
+	// to chunkSize(opts), so DefaultOptions() keeps the legacy split sizes while
+	// still opting into the auto per-extension strategy registry.
 	return Options{
-		ChunkSize:    defaultChunkSize,
-		ChunkOverlap: 0,
-		IncludeExt:   supportedExtList(),
-		ExcludeDir:   defaultExcludeDirs(),
-		MaxFileBytes: defaultMaxFileBytes,
-		MaxPDFPages:  defaultMaxPDFPages,
+		ChunkSize:     defaultChunkSize,
+		ChunkOverlap:  0,
+		IncludeExt:    supportedExtList(),
+		ExcludeDir:    defaultExcludeDirs(),
+		MaxFileBytes:  defaultMaxFileBytes,
+		MaxPDFPages:   defaultMaxPDFPages,
+		ChunkStrategy: StrategyAuto,
 	}
 }
 

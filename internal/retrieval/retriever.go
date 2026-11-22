@@ -73,7 +73,14 @@ func (r *retriever) search(ctx context.Context, query string, k int, history []T
 	if k <= 0 {
 		k = 6
 	}
-	candK := k
+	// Production RAG widens the candidate pool before reranking: TopK only
+	// bounds the final evidence set. With the old candK == k the reranker could
+	// only reorder the same handful of hits the vector search already picked,
+	// so a miss in the first stage could never be recovered downstream.
+	candK := r.cfg.CandidateK
+	if candK < k {
+		candK = k
+	}
 	if r.cfg.RetrievalMethod == config.RetrievalHybrid && r.cfg.BM25TopK > candK {
 		candK = r.cfg.BM25TopK
 	}
@@ -123,10 +130,30 @@ func (r *retriever) search(ctx context.Context, query string, k int, history []T
 	}
 	hits, err := transformedSearch(ctx, q, history, transformCfg, r.complete, rawSearch)
 	if err != nil || hits == nil {
-		hits, _ = rawSearch(ctx, q)
+		// On a hard failure search the verbatim question, not the condensed
+		// rewrite, so a bad anaphora resolution cannot erase the real query.
+		hits, _ = rawSearch(ctx, query)
 	}
 	hits = nonNil(hits)
 
+	// Anaphora resolution rewrites the question into a standalone query, but a
+	// wrong rewrite must degrade recall gradually rather than replace it. Fuse
+	// the verbatim query back in with a smaller weight whenever q differs.
+	if !quick && q != query {
+		if original, oerr := rawSearch(ctx, query); oerr == nil && len(original) > 0 {
+			hits = fuseRRF([][]index.Hit{hits, original}, []float64{0.7, 0.3}, r.cfg.RRFK)
+		}
+	}
+
+	if r.cfg.RerankEnabled {
+		if reranked, rerankErr := rerankHits(ctx, q, hits, r.cfg, r.complete); rerankErr == nil && reranked != nil {
+			hits = reranked
+		}
+	}
+
+	// min_score must run AFTER reranking: rerankHits normalizes logits back to
+	// 0..1, so the threshold compares like with like. Filtering before rerank
+	// also threw away candidates the reranker could have rescued.
 	if r.cfg.MinScore > 0 {
 		filtered := make([]index.Hit, 0, len(hits))
 		for _, h := range hits {
@@ -137,17 +164,17 @@ func (r *retriever) search(ctx context.Context, query string, k int, history []T
 		hits = filtered
 	}
 
-	if r.cfg.RerankEnabled {
-		if reranked, rerankErr := rerankHits(ctx, q, hits, r.cfg, r.complete); rerankErr == nil && reranked != nil {
-			hits = reranked
-		}
-	}
-
+	// Bound the primary evidence first. Context expansion adds neighbouring
+	// chunks as EXTRA evidence; the old code appended them and then truncated
+	// straight back to k, discarding every neighbour it had just added.
+	hits = take(hits, k)
 	if r.cfg.ContextExpand > 0 {
 		hits = r.expand(hits)
+		sortByScore(hits)
+		if cap := k * (2*r.cfg.ContextExpand + 1); cap > k {
+			hits = take(hits, cap)
+		}
 	}
-
-	hits = take(hits, k)
 	rankHits(hits)
 	return nonNil(hits), nil
 }

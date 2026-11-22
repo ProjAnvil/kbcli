@@ -61,12 +61,15 @@ var fieldCatalog = []Field{
 	{Key: "timeout_seconds", Label: "Timeout (s)", Group: groupFoundation, Kind: FieldInt, Min: 1, Max: 600, Step: 10},
 	{Key: "max_iterations", Label: "Max iterations", Group: groupFoundation, Kind: FieldInt, Min: 1, Max: 50, Step: 1},
 
-	{Key: "chunk_size", Label: "Chunk size", Group: groupIngestion, Kind: FieldInt, Min: 100, Max: 8000, Step: 100, IndexAffect: true, Help: "Rune limit per chunk (default 4000, LangChain-compatible character-splitting default). Changing this requires a re-index."},
-	{Key: "chunk_overlap", Label: "Chunk overlap", Group: groupIngestion, Kind: FieldInt, Min: 0, Max: 2000, Step: 20, IndexAffect: true, Help: "Rune overlap between chunks (default 200, LangChain-compatible character-splitting default). Changing this requires a re-index."},
+	{Key: "chunk_size", Label: "Chunk size", Group: groupIngestion, Kind: FieldInt, Min: 100, Max: 8000, Step: 100, IndexAffect: true, Help: "Rune cap for plain-text chunks only (default 4000). Structured formats use section_size. Changing this requires a re-index."},
+	{Key: "chunk_overlap", Label: "Chunk overlap", Group: groupIngestion, Kind: FieldInt, Min: 0, Max: 2000, Step: 20, IndexAffect: true, Help: "Rune overlap between chunks (default 200). Changing this requires a re-index."},
+	{Key: "section_size", Label: "Section size", Group: groupIngestion, Kind: FieldInt, Min: 100, Max: 8000, Step: 100, IndexAffect: true, Help: "Rune cap for one structured section: Markdown heading, CSV row group, HTML heading, PDF page, DOCX section (default 1000). Changing this requires a re-index."},
+	{Key: "chunk_strategy", Label: "Chunk strategy", Group: groupIngestion, Kind: FieldEnum, Options: []string{ChunkStrategyAuto, ChunkStrategyFixed}, IndexAffect: true, Help: "auto picks a structure-aware chunker per file extension; fixed forces the legacy single-size splitter for every format. Changing this requires a re-index."},
 
 	{Key: "top_k", Label: "Top K", Group: groupRetrieval, Kind: FieldInt, Min: 1, Max: 50, Step: 1, Help: "Final number of evidence passages."},
+	{Key: "candidate_k", Label: "Candidate K", Group: groupRetrieval, Kind: FieldInt, Min: 1, Max: 200, Step: 5, Help: "Broad candidate pool fetched before reranking (default 40). Query-time only; no re-index needed."},
 	{Key: "retrieval_method", Label: "Retrieval", Group: groupRetrieval, Kind: FieldEnum, Options: []string{RetrievalVector, RetrievalBM25, RetrievalHybrid}, Help: "Porto: vector / BM25 / weighted RRF hybrid."},
-	{Key: "bm25_top_k", Label: "Candidate K", Group: groupRetrieval, Kind: FieldInt, Min: 1, Max: 200, Step: 5, Help: "Porto: candidate pool amplification before fusion."},
+	{Key: "bm25_top_k", Label: "BM25 candidate K", Group: groupRetrieval, Kind: FieldInt, Min: 1, Max: 200, Step: 5, Help: "Porto: sparse candidate pool amplification before RRF fusion."},
 	{Key: "hybrid_vector_weight", Label: "Vector weight", Group: groupRetrieval, Kind: FieldFloat, Min: 0, Max: 1, Step: 0.05, Help: "Porto: RRF weight for the vector list; BM25 gets 1-w."},
 	{Key: "rrf_k", Label: "RRF k", Group: groupRetrieval, Kind: FieldInt, Min: 1, Max: 200, Step: 5, Help: "Porto: reciprocal rank smoothing constant, default 60."},
 	{Key: "bm25_k1", Label: "BM25 k1", Group: groupRetrieval, Kind: FieldFloat, Min: 0, Max: 10, Step: 0.1, Help: "Porto: term frequency saturation."},
@@ -171,8 +174,14 @@ func (c *Config) GetField(key string) (any, error) {
 		return c.ChunkSize, nil
 	case "chunk_overlap":
 		return c.ChunkOverlap, nil
+	case "section_size":
+		return c.SectionSize, nil
+	case "chunk_strategy":
+		return c.ChunkStrategy, nil
 	case "top_k":
 		return c.TopK, nil
+	case "candidate_k":
+		return c.CandidateK, nil
 	case "retrieval_method":
 		return c.RetrievalMethod, nil
 	case "bm25_top_k":
@@ -369,6 +378,8 @@ func (c *Config) setString(key, value string) error {
 		c.RerankAPIKey = value
 	case "query_transform":
 		c.QueryTransform = value
+	case "chunk_strategy":
+		c.ChunkStrategy = value
 	case "intent_mode":
 		c.IntentMode = value
 	case "intent_provider":
@@ -413,8 +424,12 @@ func (c *Config) setInt(key string, value int) error {
 		c.ChunkSize = value
 	case "chunk_overlap":
 		c.ChunkOverlap = value
+	case "section_size":
+		c.SectionSize = value
 	case "top_k":
 		c.TopK = value
+	case "candidate_k":
+		c.CandidateK = value
 	case "bm25_top_k":
 		c.BM25TopK = value
 	case "rrf_k":

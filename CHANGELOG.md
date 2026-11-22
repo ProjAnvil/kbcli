@@ -5,6 +5,144 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+No unreleased changes yet.
+
+## [0.3.0] - 2026-11-22
+
+The second feature release. It adds a first-run API key wizard, per-extension
+chunking, a production-grade retrieval pipeline, cancellable streaming with a
+per-tab spinner, read-only workspace tools and a rewritten grounded system
+prompt. It also upgrades the agent SDK. **Existing `.kbvec` indexes are
+invalidated**: run `kbcli reindex` once after upgrading.
+
+### Added
+
+- **First-run API key wizard.** A full-screen TUI wizard collects
+  `chat_provider`, a masked `api_key`, `base_url` and `model` before chat.
+  Saving validates the config, runs a 5-second HTTP probe against the endpoint
+  (any HTTP response counts as reachable), persists `~/.kbcli/config.yaml`, and
+  rebuilds the agent, retriever and session so the new key takes effect without
+  a restart. `ctrl+s` skips it and records `setup_done: true` for offline use.
+  A failed probe only produces a warning; the config is still saved.
+- **Per-extension chunking.** `internal/ingest` now uses a `Strategy` interface
+  and a `Registry` that selects a splitter by file extension: Markdown headings
+  for `.md` / `.markdown` / `.mdx`, plain-text recursive split for `.txt` /
+  `.text`, row groups for `.csv`, HTML headings for `.html` / `.htm`, pages for
+  `.pdf`, and converted Markdown sections for `.docx`. `chunk_strategy: fixed`
+  restores the legacy single-size splitter for every format.
+- **New settings.** `section_size` (default 1000 runes) caps one structured
+  section, `chunk_strategy` (`auto` | `fixed`) selects the chunker, and
+  `candidate_k` (default 40) widens the pre-rerank candidate pool. `setup_done`
+  is persisted but hidden from the settings catalog. The catalog is now 49
+  fields in 7 groups, 23 of them numeric.
+- **Production RAG fixes.** Retrieval fetches `candidate_k` candidates, recalls
+  the original question alongside a condensed rewrite with weighted RRF,
+  normalizes and re-sorts reranker scores, and applies `min_score` after
+  reranking. A shared citation ledger numbers the grounded prompt and
+  `kb_search` results consistently, and each citation is a separate budget part
+  so trimming never cuts an `[n]` marker. Empty or failed retrieval now returns
+  an explicit refusal; `AnswerMeta.Degraded` / `Reason` surface degradation in
+  the TUI status line.
+- **Read-only workspace tools.** The ReAct agent now receives `ls`,
+  `read_file`, `glob` and `grep` alongside `kb_search`. All four are scoped to
+  `Store.Root()`: absolute paths, `..` traversals and symlinks escaping the
+  workspace are rejected, binary files are refused, and results are capped at
+  200 entries, 64 KiB per read and 100 grep matches. No write tool is exposed.
+- **Cancellable streaming.** One cancellable context now spans the whole
+  post-`enter` pipeline (intent classification, retrieval, reranking and
+  generation). `esc` cancels it; a per-request generation drops late delta,
+  reset and done messages so a cancelled answer never reappears. The thinking
+  indicator is an animated braille spinner with an `esc to cancel` hint, and
+  tool-round preambles are cleared from the live transcript via `StreamHooks`.
+  `chat.cancelled` and the revised `chat.thinking` are bilingual.
+- **Streaming API surface.** `agent.StreamHooks` / `HookedStreamAnswerer`
+  expose `OnReset` so a ReAct tool-round preamble never reaches the answer.
+  `askWithContext` builds a command from a model-owned context, and
+  `answerResetMsg` / `thinkingTickMsg` / `spinRunning` drive the live
+  transcript, the shared spinner chain and stale-message filtering in the TUI.
+- **Per-tab spinners.** One shared spinner tick chain is driven by
+  `anyWindowBusy()` instead of the active window's state, so switching to an
+  idle tab never freezes a background request's animation. `tabBarView`
+  reserves one fixed cell per tab for the rotating frame (blank when idle),
+  keeping the bar width constant when requests start or finish. `spinRunning`
+  prevents duplicate chains when several tabs generate at once.
+- **Tests and i18n.** New coverage for the wizard, runner rebuild, strategy
+  registry, candidate widening, post-rerank threshold, context expansion,
+  original-query recall, citation-safe trimming, short-question routing,
+  index invalidation, filesystem-tool path confinement, tool-round filtering,
+  cancellation, stale-message dropping and spinner frames. All new UI strings
+  are bilingual with parity tests.
+
+### Changed
+
+- `chunk_size` now caps **plain-text chunks only**; structured formats are
+  capped per section by `section_size`. `IndexSignature()` additionally records
+  `section_size`, `chunk_strategy` and the `per-ext-v1` chunker version.
+- Short ASCII questions such as `why?` no longer route to `direct`; they reach
+  the knowledge base instead of silently bypassing grounding.
+- `bm25_top_k` is relabelled "BM25 candidate K"; `candidate_k` is now the broad
+  query-time pool and does not invalidate the index.
+- **Defaults raised.** `max_iterations` 8 → 50 so multi-step tool loops no
+  longer trip `graph: recursion limit (8) exceeded`; `context_max_chunk_chars`
+  800 → 1600 so each injected citation carries roughly twice the context
+  (6 hits × 1600 runes stays inside the 16000-rune budget).
+- **System prompts rewritten.** `SystemPrompt`, `SystemPromptZh` and the
+  bilingual `prompt.system_*` strings no longer tell the model to recite
+  evidence. They define instruction priority, treat retrieved text as
+  untrusted, require synthesis across passages, describe the read-only tool
+  policy, keep `[n]` citations, and specify gap handling. `systemPromptFor`
+  selects the agent-level prompt from the configured language.
+- Both READMEs document the wizard, the per-extension strategy table, the
+  revised chunk-size semantics and the updated field counts.
+- `esc` no longer quits the chat screen. While a request runs it cancels that
+  request; while idle it is a no-op, so an accidental second `esc` after a
+  cancel cannot exit the app. `q`, `:q` and `ctrl+c` remain the quit keys.
+- **Dependency upgrade.** `github.com/projanvil/langchain-golang` moves
+  `v0.14.1` → `v0.14.3`. v0.14.2 is an additive Python-parity batch (new
+  retrievers, compressors, formatters and output parsers) and v0.14.3 fixes
+  its CI; neither changes any API kbcli imports. `go mod tidy` promoted
+  `github.com/muesli/termenv v0.16.0` from indirect to direct because
+  `internal/tui/theme_quit_test.go` imports it.
+
+### Fixed
+
+- `context_expand` neighbours are no longer discarded by the final `take(k)`;
+  primary hits are taken first, then neighbours are appended and capped.
+- Reranker scores are normalized (`sigmoid` for `aikit` logits, clamp for
+  cross-encoder relevance) and the hits are re-sorted, so reranking actually
+  changes the order and `min_score` is comparable to the displayed score.
+- A failed query transform now falls back to the original question, not the
+  rewritten one.
+- `Ask` no longer hides retrieval and LLM failures; degradation is reported
+  instead of polluting the session with fallback text.
+- Grounded prompt and `kb_search` no longer use two independent `[n]` numberings.
+- **Streaming is no longer a broken half-path.** `streamAnswer` now keeps only
+  the last model round that produced no tool calls (detected from
+  `StreamModelEnd.ToolCalls` and `StreamToolStart`), so a ReAct preamble never
+  leaks into the answer. An upstream `context.Canceled` terminal event no
+  longer forces a redundant `Invoke` when final text is already available,
+  while a real caller cancellation is propagated instead of resurrecting a
+  discarded answer. A cancelled run never writes a fabricated fallback answer
+  or an assistant turn into session memory.
+
+### Upgrade notes
+
+- Existing `.kbvec` indexes are **invalidated** by the new chunker version and
+  signature fields. Run `kbcli reindex` (or `:reindex`) once after upgrading;
+  no compatibility shim is provided.
+- The first launch opens the API key wizard. Configure `api_key` beforehand or
+  press `ctrl+s` to stay offline.
+
+### Known limitations
+
+- The default embedder is still a zero-dependency hashing model rather than a
+  semantic vector model; it remains the largest recall bottleneck.
+- Retrieval still expands to adjacent chunks of the same file, not to sibling
+  files in the top hit's directory.
+- Windows runtime behaviour is still unverified on real hardware.
+
 ## [0.2.0] - 2026-11-22
 
 The first feature release after 0.1.1. Highlights: streaming answers, an

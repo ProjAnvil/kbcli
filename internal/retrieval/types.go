@@ -86,3 +86,18 @@ func TrimToBudget(parts []string, budget int) []string {
 func FormatSources(hits []index.Hit, perChunk int) string {
 	return formatSources(hits, perChunk)
 }
+
+// FormatCitations renders hits with stable 1-based citation numbers supplied
+// by the agent's citation ledger. Both the grounded prompt and the kb_search
+// tool use it, so a [n] in an answer always refers to the same chunk.
+// Implemented in context.go.
+func FormatCitations(hits []index.Hit, numbers []int, perChunk int) string {
+	return formatCitations(hits, numbers, perChunk)
+}
+
+// FormatCitationParts returns one prompt part per citation. Passing these as
+// separate parts to TrimToBudget preserves numbering when the budget trims.
+// Implemented in context.go.
+func FormatCitationParts(hits []index.Hit, numbers []int, perChunk int) []string {
+	return formatCitationParts(hits, numbers, perChunk)
+}

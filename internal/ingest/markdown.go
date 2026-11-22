@@ -9,13 +9,17 @@ import (
 	"github.com/projanvil/langchain-golang/textsplitters"
 )
 
-// chunkMarkdown splits Markdown with the remote langchain-golang splitters.
-// It header-splits first with stripHeaders=true so headings stay in metadata
-// (and therefore Chunk.Heading) rather than in Chunk.Body, then recursively
-// splits any section longer than the chunk size while keeping short sections
-// intact.
+// chunkMarkdown is the legacy wrapper: it splits with the configured ChunkSize.
 func chunkMarkdown(text string, meta chunkMeta, opts Options) ([]index.Chunk, error) {
-	size := chunkSize(opts)
+	return chunkMarkdownWithSize(text, meta, chunkSize(opts), opts.ChunkOverlap)
+}
+
+// chunkMarkdownWithSize splits Markdown with the remote langchain-golang
+// splitters using an explicit rune cap. It header-splits first with
+// stripHeaders=true so headings stay in metadata (and therefore Chunk.Heading)
+// rather than in Chunk.Body, then recursively splits any section longer than
+// size while keeping short sections intact.
+func chunkMarkdownWithSize(text string, meta chunkMeta, size, overlap int) ([]index.Chunk, error) {
 	headers := []textsplitters.Header{
 		{Marker: "#", Name: "h1"},
 		{Marker: "##", Name: "h2"},
@@ -24,7 +28,6 @@ func chunkMarkdown(text string, meta chunkMeta, opts Options) ([]index.Chunk, er
 	}
 	headerSplitter := textsplitters.NewMarkdownHeader(headers, false, true)
 
-	overlap := opts.ChunkOverlap
 	if overlap < 0 || overlap >= size {
 		overlap = 0
 	}

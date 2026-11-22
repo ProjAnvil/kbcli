@@ -121,17 +121,14 @@ func chunkFile(root, path string, opts Options) (Result, error) {
 		}
 	}
 
-	var chunks []index.Chunk
-	switch ext {
-	case ".md", ".markdown":
-		chunks, err = chunkMarkdown(text, meta, opts)
-	case ".pdf":
-		chunks, err = chunkPDF(data, meta, opts)
-	case ".docx":
-		chunks, err = chunkDOCX(data, meta, opts)
-	default: // .txt .text .csv .mdx .html .htm
-		chunks, err = chunkText(text, ext, meta, opts)
+	src := Source{Root: root, Path: path, Ext: ext, Text: text, Data: data, Meta: meta, Opts: opts}
+	var strategy Strategy
+	if opts.ChunkStrategy == StrategyFixed {
+		strategy = fixedRegistry().For(ext)
+	} else {
+		strategy = autoRegistry().For(ext)
 	}
+	chunks, err := strategy.Chunk(src)
 	if err != nil {
 		return Result{}, fmt.Errorf("chunk %q: %w", path, err)
 	}

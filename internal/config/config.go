@@ -64,6 +64,17 @@ const (
 	TransformMultiQuery    = "multi_query"
 	TransformDecomposition = "decomposition"
 	TransformStepBack      = "step_back"
+
+	// ChunkStrategyAuto selects a structure-aware chunker per file extension.
+	// ChunkStrategyFixed forces the legacy single-size splitter for every
+	// format, reproducing pre-v0.3.0 behaviour.
+	ChunkStrategyAuto  = "auto"
+	ChunkStrategyFixed = "fixed"
+
+	// ChunkerVersion is the SPLITTER_VERSION equivalent for the per-extension
+	// chunker registry. Bump it whenever a Strategy's output changes so every
+	// existing .kbvec built with an older chunker is reported stale.
+	ChunkerVersion = "per-ext-v1"
 )
 
 // Config holds every user-tunable knob. Zero values are replaced by defaults
@@ -84,13 +95,25 @@ type Config struct {
 	IndexFileName  string `yaml:"index_file" json:"index_file"`
 	TimeoutSeconds int    `yaml:"timeout_seconds" json:"timeout_seconds"`
 	MaxIterations  int    `yaml:"max_iterations" json:"max_iterations"`
+	// SetupDone records that the first-run API key wizard was completed or
+	// deliberately skipped. It keeps kbcli from re-prompting users who run a
+	// local endpoint that needs no key. Not exposed in the settings catalog.
+	SetupDone bool `yaml:"setup_done" json:"setup_done"`
 
 	// Ingestion settings (index).
 	ChunkSize    int `yaml:"chunk_size" json:"chunk_size"`
 	ChunkOverlap int `yaml:"chunk_overlap" json:"chunk_overlap"`
+	// SectionSize caps one structured section (Markdown heading, CSV row
+	// group, HTML heading, PDF page or DOCX section). ChunkSize is now the
+	// cap for plain-text sources only.
+	SectionSize   int    `yaml:"section_size" json:"section_size"`
+	ChunkStrategy string `yaml:"chunk_strategy" json:"chunk_strategy"`
 
 	// Retrieval settings. Ported from Porto's rag namespace.
-	TopK                 int     `yaml:"top_k" json:"top_k"`
+	TopK int `yaml:"top_k" json:"top_k"`
+	// CandidateK is the broad candidate pool fetched before reranking. It is
+	// query-time only: changing it never invalidates an index.
+	CandidateK           int     `yaml:"candidate_k" json:"candidate_k"`
 	RetrievalMethod      string  `yaml:"retrieval_method" json:"retrieval_method"`
 	BM25TopK             int     `yaml:"bm25_top_k" json:"bm25_top_k"`
 	HybridVectorWeight   float64 `yaml:"hybrid_vector_weight" json:"hybrid_vector_weight"`
@@ -137,13 +160,13 @@ type Config struct {
 	SessionMemoryTopK        int     `yaml:"session_memory_top_k" json:"session_memory_top_k"`
 }
 
-// Default returns the out-of-the-box configuration. All new optimization
-// switches default to the pre-existing behaviour (pure vector retrieval, no
-// rerank, no query transform), so an upgraded install changes nothing.
+// Default returns the out-of-the-box configuration.
 //
-// Defaults match LangChain's RecursiveCharacterTextSplitter character-splitting
-// defaults: 4000 units with 200 overlap. kbcli counts Go runes, the Unicode
-// code-point analogue of Python len().
+// ChunkSize keeps LangChain's RecursiveCharacterTextSplitter default of 4000
+// runes with 200 overlap, but now applies only to plain-text sources.
+// Structured formats use SectionSize (1000) so one chunk never mixes several
+// headings or topics. CandidateK widens the pre-rerank pool from TopK to 40.
+// kbcli counts Go runes, the Unicode code-point analogue of Python len().
 func Default() *Config {
 	return &Config{
 		ChatProvider:             ChatProviderOpenAI,
@@ -153,10 +176,14 @@ func Default() *Config {
 		Agent:                    AgentReact,
 		IndexFileName:            DefaultIndexFileName,
 		TimeoutSeconds:           120,
-		MaxIterations:            8,
+		MaxIterations:            50,
+		SetupDone:                false,
 		ChunkSize:                4000,
 		ChunkOverlap:             200,
+		SectionSize:              1000,
+		ChunkStrategy:            ChunkStrategyAuto,
 		TopK:                     6,
+		CandidateK:               40,
 		RetrievalMethod:          RetrievalVector,
 		BM25TopK:                 20,
 		HybridVectorWeight:       0.5,
@@ -166,7 +193,7 @@ func Default() *Config {
 		MinScore:                 0.0,
 		ContextExpand:            0,
 		ContextCharBudget:        16000,
-		ContextMaxChunkChars:     800,
+		ContextMaxChunkChars:     1600,
 		RerankEnabled:            true,
 		RerankType:               RerankAikit,
 		RerankModel:              DefaultRerankModel,
@@ -205,6 +232,9 @@ func (c *Config) IndexSignature() string {
 	return strings.Join([]string{
 		"chunk_size=" + strconv.Itoa(c.ChunkSize),
 		"chunk_overlap=" + strconv.Itoa(c.ChunkOverlap),
+		"section_size=" + strconv.Itoa(c.SectionSize),
+		"chunk_strategy=" + c.ChunkStrategy,
+		"chunker=" + ChunkerVersion,
 		"embedder=" + c.Embedder,
 		"embed_model=" + c.EmbedModel,
 	}, "|")
@@ -251,6 +281,12 @@ func IndexAffectingChanges(before, after *Config) []string {
 	}
 	if before.ChunkOverlap != after.ChunkOverlap {
 		out = append(out, "chunk_overlap")
+	}
+	if before.SectionSize != after.SectionSize {
+		out = append(out, "section_size")
+	}
+	if before.ChunkStrategy != after.ChunkStrategy {
+		out = append(out, "chunk_strategy")
 	}
 	if before.Embedder != after.Embedder {
 		out = append(out, "embedder")
@@ -393,6 +429,11 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("config: unsupported query_transform %q", c.QueryTransform)
 	}
+	switch c.ChunkStrategy {
+	case ChunkStrategyAuto, ChunkStrategyFixed:
+	default:
+		return fmt.Errorf("config: unsupported chunk_strategy %q (want %q or %q)", c.ChunkStrategy, ChunkStrategyAuto, ChunkStrategyFixed)
+	}
 	switch c.IntentMode {
 	case IntentOff, IntentBinary, IntentAdaptive:
 	default:
@@ -431,6 +472,12 @@ func (c *Config) Validate() error {
 	}
 	if c.ChunkOverlap < 0 || c.ChunkOverlap >= c.ChunkSize {
 		return fmt.Errorf("config: chunk_overlap must be 0..chunk_size-1, got %d", c.ChunkOverlap)
+	}
+	if c.SectionSize <= 0 || c.SectionSize > 8000 {
+		return fmt.Errorf("config: section_size must be 1..8000, got %d", c.SectionSize)
+	}
+	if c.CandidateK < 1 || c.CandidateK > 200 {
+		return fmt.Errorf("config: candidate_k must be 1..200, got %d", c.CandidateK)
 	}
 	if c.MaxIterations <= 0 {
 		return fmt.Errorf("config: max_iterations must be > 0, got %d", c.MaxIterations)
@@ -492,6 +539,15 @@ func (c *Config) Normalize() {
 	}
 	if c.RerankTopN <= 0 {
 		c.RerankTopN = d.RerankTopN
+	}
+	if c.SectionSize <= 0 {
+		c.SectionSize = d.SectionSize
+	}
+	if c.CandidateK <= 0 {
+		c.CandidateK = d.CandidateK
+	}
+	if c.ChunkStrategy == "" {
+		c.ChunkStrategy = d.ChunkStrategy
 	}
 	if c.MultiQueryCount <= 0 {
 		c.MultiQueryCount = d.MultiQueryCount
@@ -563,6 +619,15 @@ func (c *Config) applyDefaults() {
 	}
 	if c.ChunkOverlap < 0 {
 		c.ChunkOverlap = d.ChunkOverlap
+	}
+	if c.SectionSize <= 0 {
+		c.SectionSize = d.SectionSize
+	}
+	if c.CandidateK <= 0 {
+		c.CandidateK = d.CandidateK
+	}
+	if c.ChunkStrategy == "" {
+		c.ChunkStrategy = d.ChunkStrategy
 	}
 	if c.MaxIterations <= 0 {
 		c.MaxIterations = d.MaxIterations

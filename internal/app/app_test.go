@@ -366,6 +366,9 @@ func TestBuildWithLocalEmbedderKeepsRuneChunking(t *testing.T) {
 
 	cfg := testConfig(t)
 	cfg.ChunkSize = 600
+	// Markdown is a structured format: its sections are capped by section_size,
+	// not by the plain-text chunk_size.
+	cfg.SectionSize = 600
 	a, err := Open(cfg, root, "")
 	if err != nil {
 		t.Fatal(err)

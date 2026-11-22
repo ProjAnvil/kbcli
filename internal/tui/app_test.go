@@ -188,7 +188,12 @@ func TestQuestionGoesToAsk(t *testing.T) {
 	if !chatHas(mm, "you > what is the capital?") {
 		t.Fatal("user turn was not appended immediately")
 	}
-	if _, ok := cmd().(answerMsg); !ok {
+	// The ask command now batches the producer with the thinking spinner tick.
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) == 0 {
+		t.Fatalf("ask tea.Cmd = %T, want a batched command", cmd())
+	}
+	if _, ok := batch[0]().(answerMsg); !ok {
 		t.Fatal("ask tea.Cmd did not yield answerMsg")
 	}
 	if !ans.called || ans.gotQuestion != "what is the capital?" {

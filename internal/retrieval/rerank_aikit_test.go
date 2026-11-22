@@ -84,7 +84,9 @@ func assertAikitIDs(t *testing.T, hits []index.Hit, want ...string) {
 	}
 }
 
-func TestAikitRerankAppliesScoresInInputOrder(t *testing.T) {
+// ScoreBatch scores map positionally onto the input documents, but the
+// returned hits are normalized to 0..1 and re-sorted by the reranker score.
+func TestAikitRerankNormalizesScoresAndReorders(t *testing.T) {
 	fake := &fakeAikitCE{scores: []float32{0.9, 0.1, 0.5}}
 	installFakeAikit(t, fake, nil)
 	cfg := aikitConfig()
@@ -102,6 +104,7 @@ func TestAikitRerankAppliesScoresInInputOrder(t *testing.T) {
 	if fake.concurrency != 0 {
 		t.Fatalf("concurrency = %d, want 0", fake.concurrency)
 	}
+	// Documents are always sent in the original hit order.
 	if len(fake.docs) != 3 || fake.docs[0] != "body a" || fake.docs[1] != "body b" || fake.docs[2] != "body c" {
 		t.Fatalf("documents = %v", fake.docs)
 	}
@@ -111,13 +114,37 @@ func TestAikitRerankAppliesScoresInInputOrder(t *testing.T) {
 	if !fake.closed {
 		t.Fatal("cross encoder was not closed")
 	}
-	assertAikitIDs(t, out, "a", "b", "c")
-	for i, want := range []float32{0.9, 0.1, 0.5} {
-		if diff := math.Abs(out[i].Score - float64(want)); diff > 1e-6 {
+	assertAikitIDs(t, out, "a", "c", "b")
+	for i, want := range []float64{sigmoid(0.9), sigmoid(0.5), sigmoid(0.1)} {
+		if diff := math.Abs(out[i].Score - want); diff > 1e-6 {
 			t.Fatalf("score at %d = %v, want %v", i, out[i].Score, want)
+		}
+		if out[i].Score <= 0 || out[i].Score >= 1 {
+			t.Fatalf("rerank score %v is outside (0,1)", out[i].Score)
 		}
 		if out[i].Rank != i+1 {
 			t.Fatalf("rank at %d = %d, want %d", i, out[i].Rank, i+1)
+		}
+	}
+}
+
+// Unbounded cross-encoder logits must land in (0,1) and keep their order so
+// min_score and the evidence bar stay calibrated after reranking.
+func TestAikitRerankLogitsAreBoundedAndOrdered(t *testing.T) {
+	fake := &fakeAikitCE{scores: []float32{-12, 0, 9}}
+	installFakeAikit(t, fake, nil)
+
+	out, err := rerankHits(context.Background(), "q", aikitHits(), aikitConfig(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertAikitIDs(t, out, "c", "b", "a")
+	for i, h := range out {
+		if h.Score <= 0 || h.Score >= 1 {
+			t.Fatalf("score %d = %v, want strictly inside (0,1)", i, h.Score)
+		}
+		if i > 0 && h.Score > out[i-1].Score {
+			t.Fatalf("scores are not descending: %+v", out)
 		}
 	}
 }
@@ -132,7 +159,8 @@ func TestAikitRerankRespectsTopN(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertAikitIDs(t, out, "a", "b")
+	// Scores 0.9/0.1/0.5 rank as a, c, b; TopN keeps the first two.
+	assertAikitIDs(t, out, "a", "c")
 	if out[0].Rank != 1 || out[1].Rank != 2 {
 		t.Fatalf("ranks were not reassigned: %+v", out)
 	}
@@ -180,9 +208,9 @@ func TestAikitRerankUsesManagedModelDirOnEmptyPath(t *testing.T) {
 	if fake.calls != 1 {
 		t.Fatalf("ScoreBatch calls = %d, want 1", fake.calls)
 	}
-	assertAikitIDs(t, out, "a", "b", "c")
-	if diff := math.Abs(out[0].Score - 0.9); diff > 1e-6 {
-		t.Fatalf("score = %v, want 0.9", out[0].Score)
+	assertAikitIDs(t, out, "a", "c", "b")
+	if diff := math.Abs(out[0].Score - sigmoid(0.9)); diff > 1e-6 {
+		t.Fatalf("score = %v, want %v", out[0].Score, sigmoid(0.9))
 	}
 }
 

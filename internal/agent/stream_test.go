@@ -236,3 +236,121 @@ func TestAskStreamDirectKeepsShortAnswer(t *testing.T) {
 		t.Fatal("direct route must not start the streaming or invoke path")
 	}
 }
+
+// toolRoundEvents models a ReAct run: the first model round is a preamble
+// that ends in a tool call, then a tools node runs, then the final model
+// round produces the answer.
+func toolRoundEvents() []agents.StreamEvent {
+	preamble := messages.AI("Let me look that up.")
+	preamble.ToolCalls = []messages.ToolCall{{Name: "kb_search", Args: map[string]any{"q": "x"}}}
+	return []agents.StreamEvent{
+		{Type: agents.StreamNodeStart, Node: agents.ModelNodeName},
+		{Type: agents.StreamModelDelta, Node: agents.ModelNodeName, Text: "Let me look"},
+		{Type: agents.StreamModelDelta, Node: agents.ModelNodeName, Text: " that up."},
+		{Type: agents.StreamModelEnd, Node: agents.ModelNodeName, Message: &preamble},
+		{Type: agents.StreamNodeStart, Node: agents.ToolsNodeName},
+		{Type: agents.StreamToolStart, Node: agents.ToolsNodeName, ToolName: "kb_search"},
+		{Type: agents.StreamToolEnd, Node: agents.ToolsNodeName, ToolName: "kb_search"},
+		{Type: agents.StreamNodeStart, Node: agents.ModelNodeName},
+		{Type: agents.StreamModelDelta, Node: agents.ModelNodeName, Text: "The answer "},
+		{Type: agents.StreamModelDelta, Node: agents.ModelNodeName, Text: "is 42."},
+		{Type: agents.StreamModelEnd, Node: agents.ModelNodeName, Message: streamMessagePtr(messages.AI("The answer is 42."))},
+		{Type: agents.StreamEnd, Message: streamMessagePtr(messages.AI("The answer is 42."))},
+	}
+}
+
+func TestAskStreamHookedDropsToolRoundPreamble(t *testing.T) {
+	stub := &streamStub{events: toolRoundEvents()}
+	r := streamRunner(stub)
+
+	var got []string
+	resets := 0
+	answer, _, err := r.AskStreamHooked(context.Background(), nil, "q", StreamHooks{
+		OnDelta: func(d string) { got = append(got, d) },
+		OnReset: func() { resets++ },
+	})
+	if err != nil {
+		t.Fatalf("AskStreamHooked: %v", err)
+	}
+	if answer != "The answer is 42." {
+		t.Fatalf("answer = %q, want only the final round", answer)
+	}
+	if resets != 1 {
+		t.Fatalf("OnReset called %d times, want 1", resets)
+	}
+	if stub.invokeCalls != 0 {
+		t.Fatalf("Invoke called %d times on a healthy stream", stub.invokeCalls)
+	}
+	// All deltas are still delivered live; OnReset is what tells the UI to
+	// clear the preamble before the final round renders.
+	want := []string{"Let me look", " that up.", "The answer ", "is 42."}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("deltas = %q, want %q", got, want)
+	}
+}
+
+func TestAskStreamKeepsFinalTextOnUpstreamContextCanceled(t *testing.T) {
+	// Some tool-using runs terminate with a wrapped context.Canceled that is
+	// NOT a caller cancellation. The collected final answer must win instead
+	// of restarting the agent through Invoke.
+	stub := &streamStub{
+		events: []agents.StreamEvent{
+			{Type: agents.StreamNodeStart, Node: agents.ModelNodeName},
+			{Type: agents.StreamModelDelta, Node: agents.ModelNodeName, Text: "Done."},
+			{Type: agents.StreamModelEnd, Node: agents.ModelNodeName, Message: streamMessagePtr(messages.AI("Done."))},
+			{Type: agents.StreamEnd, Err: context.Canceled},
+		},
+		invokeMsgs: []messages.Message{messages.AI("should not be used")},
+	}
+	r := streamRunner(stub)
+
+	answer, _, err := r.AskStream(context.Background(), nil, "q", func(string) {})
+	if err != nil {
+		t.Fatalf("AskStream: %v", err)
+	}
+	if answer != "Done." {
+		t.Fatalf("answer = %q, want the streamed text", answer)
+	}
+	if stub.invokeCalls != 0 {
+		t.Fatalf("Invoke fell back %d times on an upstream cancel", stub.invokeCalls)
+	}
+}
+
+func TestAskStreamPropagatesCallerCancellation(t *testing.T) {
+	stub := &streamStub{
+		events:     []agents.StreamEvent{{Type: agents.StreamEnd, Err: context.Canceled}},
+		invokeMsgs: []messages.Message{messages.AI("should not be used")},
+	}
+	r := streamRunner(stub)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, err := r.AskStream(ctx, nil, "q", func(string) {})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if stub.invokeCalls != 0 {
+		t.Fatalf("Invoke ran %d times on a caller cancellation", stub.invokeCalls)
+	}
+}
+
+func TestAskStreamAskDoesNotRecordFallbackOnCancel(t *testing.T) {
+	stub := &streamStub{
+		events:     []agents.StreamEvent{{Type: agents.StreamEnd, Err: context.Canceled}},
+		invokeMsgs: []messages.Message{messages.AI("should not be used")},
+	}
+	r := streamRunner(stub)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	answer, _, err := r.AskStream(ctx, nil, "q", func(string) {})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if strings.Contains(answer, "LLM unavailable") {
+		t.Fatalf("cancelled run fabricated a fallback answer: %q", answer)
+	}
+	if answer != "" {
+		t.Fatalf("cancelled run returned an answer: %q", answer)
+	}
+}

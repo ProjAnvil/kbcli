@@ -43,6 +43,11 @@ type AnswerMeta struct {
 	FactsCount   int
 	SessionTitle string
 	HasSummary   bool
+	// Degraded is true when retrieval, the LLM, or grounding fell back to a
+	// reduced path. Reason is a short machine-facing code shown in the TUI so
+	// a silent degradation never looks like a normal grounded answer.
+	Degraded bool
+	Reason   string
 }
 
 // MetaAnswerer is an optional Answerer extension.
@@ -58,6 +63,22 @@ type MetaAnswerer interface {
 type StreamAnswerer interface {
 	Answerer
 	AskStream(ctx context.Context, history []Turn, question string, onDelta func(string)) (string, []index.Hit, error)
+}
+
+// StreamHooks carries the delivery callbacks for one streamed answer.
+// OnReset asks the consumer to discard text already delivered for a model
+// round that turned out to be a tool-call round. It is optional.
+type StreamHooks struct {
+	OnDelta func(string)
+	OnReset func()
+}
+
+// HookedStreamAnswerer is an optional extension of StreamAnswerer. Callers
+// that can render a live transcript prefer it so tool-round preambles never
+// leak into the answer. Implementations must behave like AskStream otherwise.
+type HookedStreamAnswerer interface {
+	StreamAnswerer
+	AskStreamHooked(ctx context.Context, history []Turn, question string, hooks StreamHooks) (string, []index.Hit, error)
 }
 
 // NewSink creates an empty evidence sink. Implemented in evidence.go.

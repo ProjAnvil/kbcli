@@ -51,8 +51,24 @@ type runner struct {
 	classifier *intent.Classifier
 	complete   retrieval.CompleteFunc
 
+	// Citations are shared by the grounded prompt and the kb_search tool so a
+	// follow-up lookup cannot renumber evidence the model already cited.
+	ledger     *citationLedger
+	ledgerOnce sync.Once
+
 	metaMu sync.RWMutex
 	meta   AnswerMeta
+}
+
+// citations lazily creates the ledger so runners built by hand in unit tests
+// (a struct literal without newRunner) still work without a nil panic.
+func (r *runner) citations() *citationLedger {
+	r.ledgerOnce.Do(func() {
+		if r.ledger == nil {
+			r.ledger = newCitationLedger()
+		}
+	})
+	return r.ledger
 }
 
 // LastMeta exposes the diagnostics of the most recent Ask call.
@@ -80,7 +96,8 @@ func newRunner(cfg *config.Config, store index.Store, sink Sink, sess *session.S
 	if err != nil {
 		return nil, fmt.Errorf("agent: build retriever: %w", err)
 	}
-	tool, err := newSearchTool(cfg, ret, sink)
+	ledger := newCitationLedger()
+	tool, err := newSearchToolWithLedger(cfg, ret, sink, ledger)
 	if err != nil {
 		return nil, err
 	}
@@ -88,12 +105,16 @@ func newRunner(cfg *config.Config, store index.Store, sink Sink, sess *session.S
 	var ag *agents.Agent
 	switch cfg.Agent {
 	case config.AgentReact:
-		ag, err = prebuilt.CreateReactAgent(model, []coretools.Tool{tool},
-			agents.WithAgentSystemPrompt(SystemPrompt),
+		tools := []coretools.Tool{tool}
+		if store != nil {
+			tools = append(tools, fsTools(store.Root())...)
+		}
+		ag, err = prebuilt.CreateReactAgent(model, tools,
+			agents.WithAgentSystemPrompt(systemPromptFor(cfg)),
 			agents.WithAgentRecursionLimit(cfg.MaxIterations))
 	case config.AgentDeep:
 		ag, err = deepagents.CreateDeepAgent(model,
-			deepagents.WithSystemPrompt(SystemPrompt),
+			deepagents.WithSystemPrompt(systemPromptFor(cfg)),
 			deepagents.WithTools(tool),
 			deepagents.WithBackend(backends.NewStateBackend()))
 	default:
@@ -112,6 +133,7 @@ func newRunner(cfg *config.Config, store index.Store, sink Sink, sess *session.S
 		agent:      ag,
 		streamer:   ag,
 		sess:       sess,
+		ledger:     ledger,
 		classifier: intent.New(cfg, intent.CompleteFunc(complete)),
 		complete:   complete,
 	}, nil
@@ -132,12 +154,23 @@ func (r *runner) Ask(ctx context.Context, history []Turn, question string) (stri
 
 // AskStream mirrors Ask but delivers each model text delta to onDelta as it
 // arrives. onDelta runs on the caller's goroutine and is never called
-// concurrently. A broken or empty stream fails open to the Invoke path so a
-// streaming failure never breaks the chat.
+// concurrently. A broken stream fails open to the Invoke path, except when
+// the caller cancelled: re-running the LLM on a cancelled context wastes a
+// request and can resurrect an answer the user already discarded.
 func (r *runner) AskStream(ctx context.Context, history []Turn, question string, onDelta func(string)) (string, []index.Hit, error) {
+	return r.AskStreamHooked(ctx, history, question, StreamHooks{OnDelta: onDelta})
+}
+
+// AskStreamHooked is the full streaming entry point. OnReset lets the UI drop
+// preamble text when a tool round starts, so only the final answer round
+// reaches the transcript.
+func (r *runner) AskStreamHooked(ctx context.Context, history []Turn, question string, hooks StreamHooks) (string, []index.Hit, error) {
 	return r.ask(ctx, history, question, func(ctx context.Context, msgs []messages.Message) (string, error) {
-		answer, err := r.streamAnswer(ctx, msgs, onDelta)
+		answer, err := r.streamAnswer(ctx, msgs, hooks)
 		if err != nil {
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
 			return r.invokeAnswer(ctx, msgs)
 		}
 		return answer, nil
@@ -157,10 +190,18 @@ func (r *runner) invokeAnswer(ctx context.Context, msgs []messages.Message) (str
 	return answer, nil
 }
 
-// streamAnswer drains the agent event stream, sending every model_delta text
-// to onDelta in order. It returns the assembled answer, or an error so the
-// caller can fall back to Invoke.
-func (r *runner) streamAnswer(ctx context.Context, msgs []messages.Message, onDelta func(string)) (string, error) {
+// streamAnswer drains the agent event stream and returns the text of the last
+// model round that produced no tool calls. A ReAct agent may run several model
+// rounds before answering: each round that ends in a tool call is a preamble
+// ("let me look that up") and must not leak into the answer. Deltas are still
+// pushed live through hooks.OnDelta, so hooks.OnReset tells the consumer to
+// clear a preamble as soon as a tool round is detected.
+//
+// The upstream graph sometimes terminates a tool-using run with a wrapped
+// context.Canceled that is not a caller cancellation. In that case the final
+// answer text we already collected wins instead of restarting the agent via
+// Invoke. A real caller cancellation (ctx.Err() != nil) is always propagated.
+func (r *runner) streamAnswer(ctx context.Context, msgs []messages.Message, hooks StreamHooks) (string, error) {
 	if r.streamer == nil {
 		return "", errors.New("agent: streaming unavailable")
 	}
@@ -170,7 +211,18 @@ func (r *runner) streamAnswer(ctx context.Context, msgs []messages.Message, onDe
 	}
 	defer stream.Close()
 
-	var b strings.Builder
+	var round strings.Builder // text of the model round in progress
+	var final strings.Builder // text of the last round without tool calls
+	delivered := false        // round text has been pushed through OnDelta
+
+	discardRound := func() {
+		if delivered && hooks.OnReset != nil {
+			hooks.OnReset()
+		}
+		round.Reset()
+		delivered = false
+	}
+
 	for {
 		ev, ok, err := stream.Next(ctx)
 		if err != nil {
@@ -180,29 +232,62 @@ func (r *runner) streamAnswer(ctx context.Context, msgs []messages.Message, onDe
 			break
 		}
 		switch ev.Type {
+		case agents.StreamNodeStart:
+			if ev.Node == agents.ModelNodeName {
+				round.Reset()
+				delivered = false
+			}
 		case agents.StreamModelDelta:
 			if ev.Text == "" {
-				continue // non-text delta, nothing to render
+				continue // tool-call or reasoning delta, nothing to render
 			}
-			b.WriteString(ev.Text)
-			if onDelta != nil {
-				onDelta(ev.Text)
+			round.WriteString(ev.Text)
+			if hooks.OnDelta != nil {
+				hooks.OnDelta(ev.Text)
+				delivered = true
 			}
+		case agents.StreamModelEnd:
+			if modelHasToolCalls(ev.Message) {
+				discardRound()
+			} else {
+				final.Reset()
+				final.WriteString(round.String())
+			}
+		case agents.StreamToolStart:
+			// Belt and suspenders: some providers omit tool calls from the
+			// model_end message but still dispatch tools.
+			discardRound()
 		case agents.StreamEnd:
 			if ev.Err != nil {
+				if ctx.Err() != nil {
+					return "", ctx.Err()
+				}
+				if errors.Is(ev.Err, context.Canceled) || errors.Is(ev.Err, context.DeadlineExceeded) {
+					if answer := final.String(); strings.TrimSpace(answer) != "" {
+						return answer, nil
+					}
+				}
 				return "", ev.Err
 			}
-			// Some models emit only a terminal message without deltas.
-			if b.Len() == 0 && ev.Message != nil && ev.Message.Content != "" {
-				return ev.Message.Content, nil
+			// Some models emit only a terminal message without deltas or a
+			// model_end event.
+			if strings.TrimSpace(final.String()) == "" && ev.Message != nil {
+				final.Reset()
+				final.WriteString(ev.Message.Content)
 			}
 		}
 	}
-	answer := b.String()
+	answer := final.String()
 	if strings.TrimSpace(answer) == "" {
 		return "", errors.New("agent: empty answer stream")
 	}
 	return answer, nil
+}
+
+// modelHasToolCalls reports whether an assembled model message requested one
+// or more tool calls. Those rounds are preambles, not the final answer.
+func modelHasToolCalls(m *messages.Message) bool {
+	return m != nil && (len(m.ToolCalls) > 0 || len(m.InvalidToolCalls) > 0)
 }
 
 // ask holds the retrieval, routing, session and evidence logic shared by Ask
@@ -219,10 +304,16 @@ func (r *runner) ask(ctx context.Context, history []Turn, question string, answe
 	if r.classifier != nil {
 		decision = r.classifier.Classify(ctx, question)
 	}
+	if err := ctx.Err(); err != nil {
+		return "", nil, err
+	}
 	meta.Intent = decision.Intent
 	meta.IntentReason = decision.Reason
 	meta.IntentEngine = decision.Engine
 	r.trackUserTurn(question, &meta)
+
+	// Each turn builds a fresh prompt, so citation numbers start at [1] again.
+	r.citations().Reset()
 
 	// Porto's direct route never touches the vector store. Answer with one
 	// short LLM call and publish empty evidence so a previous result clears.
@@ -231,6 +322,9 @@ func (r *runner) ask(ctx context.Context, history []Turn, question string, answe
 		r.sink.Set(hits)
 		r.setMeta(meta)
 		answer := r.answerDirect(ctx, question, lang)
+		if err := ctx.Err(); err != nil {
+			return "", hits, err
+		}
 		r.recordAnswer(answer)
 		return answer, hits, nil
 	}
@@ -247,7 +341,8 @@ func (r *runner) ask(ctx context.Context, history []Turn, question string, answe
 		raw, err = r.retriever.SearchWithHistory(ctx, question, r.cfg.TopK, turns)
 	}
 	hits := append([]index.Hit{}, raw...)
-	r.sink.Set(hits)
+	numbers, allHits := r.citations().Register(hits)
+	r.sink.Set(allHits)
 
 	// Surface Porto's condense gate result to the TUI.
 	if reporter, ok := r.retriever.(retrieval.CondenseReporter); ok {
@@ -257,10 +352,31 @@ func (r *runner) ask(ctx context.Context, history []Turn, question string, answe
 		meta.Rewritten = cm.Rewritten
 		meta.Method = cm.Method
 	}
-	r.setMeta(meta)
+
+	// A cancelled run must not fabricate a fallback answer or write a bogus
+	// assistant turn into session memory.
+	if err := ctx.Err(); err != nil {
+		return "", hits, err
+	}
 
 	if err != nil {
 		answer := fallbackAnswer(hits, fmt.Errorf("agent: retrieve evidence: %w", err), lang)
+		meta.Degraded, meta.Reason = true, "retrieval_failed"
+		r.setMeta(meta)
+		r.recordAnswer(answer)
+		return answer, hits, nil
+	}
+	// Production RAG refuses when retrieval found nothing. Sending an empty
+	// evidence block to an LLM invites hallucination and wastes a call; the
+	// grounded system prompt already defines the refusal wording.
+	if len(hits) == 0 {
+		key := "answer.no_evidence_en"
+		if lang == i18n.LangZh {
+			key = "answer.no_evidence_zh"
+		}
+		answer := lang.T(key)
+		meta.Degraded, meta.Reason = true, "no_evidence"
+		r.setMeta(meta)
 		r.recordAnswer(answer)
 		return answer, hits, nil
 	}
@@ -278,7 +394,10 @@ func (r *runner) ask(ctx context.Context, history []Turn, question string, answe
 			parts = append(parts, lang.Tf("prompt.facts", block))
 		}
 	}
-	parts = append(parts, lang.Tf("prompt.evidence", retrieval.FormatSources(hits, r.cfg.ContextMaxChunkChars)))
+	// Keep every citation as its own part. TrimToBudget then drops whole
+	// trailing snippets instead of cutting a numbered passage in half.
+	parts = append(parts, lang.Tf("prompt.evidence", ""))
+	parts = append(parts, retrieval.FormatCitationParts(hits, numbers, r.cfg.ContextMaxChunkChars)...)
 	parts = retrieval.TrimToBudget(parts, r.cfg.ContextCharBudget)
 
 	// Turn the trimmed parts into system + human messages: the first part is the
@@ -299,12 +418,18 @@ func (r *runner) ask(ctx context.Context, history []Turn, question string, answe
 	msgs = append(msgs, base[1:]...)
 
 	answer, invokeErr := answerFn(ctx, msgs)
+	if err := ctx.Err(); err != nil {
+		r.setMeta(meta)
+		return "", hits, err
+	}
 	if answer == "" {
 		if invokeErr == nil {
 			invokeErr = errors.New("no AI message in agent output")
 		}
 		answer = fallbackAnswer(hits, invokeErr, lang)
+		meta.Degraded, meta.Reason = true, "llm_failed"
 	}
+	r.setMeta(meta)
 	r.recordAnswer(answer)
 	return answer, hits, nil
 }

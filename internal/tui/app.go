@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,8 +29,8 @@ const (
 	// the help row. So viewport height = terminal height - reservedRows.
 	reservedRows = 6 // header, two pane borders, input, tab bar, help
 
-	helpLine      = "enter send · :settings / :reindex / :update / :help / :q · ctrl+x windows · tab · ctrl+] evidence · q/ctrl+c quit"
-	thinkingLabel = "  ⠋ thinking..."
+	helpLine = "enter send · :settings / :reindex / :update / :help / :q · ctrl+x windows · tab · ctrl+] evidence · q/ctrl+c quit"
+
 	emptyEvidence = "No evidence yet. Ask a question."
 	welcomeLine   = "kbcli ready. Ask a question, type :settings to configure, or :help for commands."
 )
@@ -95,6 +96,18 @@ type model struct {
 	streamText string
 	streaming  bool
 
+	// cancel stops the whole in-flight request (intent, retrieval, rerank and
+	// generation). reqGen is the active window's request generation; nextGen
+	// is a monotonic allocator so a cancelled request's late messages can be
+	// dropped. spinFrame drives the animated thinking glyph.
+	// spinRunning guards the single shared tick chain. It is global, not
+	// per-window, so several busy tabs never spawn duplicate chains.
+	cancel      context.CancelFunc
+	reqGen      uint64
+	nextGen     uint64
+	spinFrame   int
+	spinRunning bool
+
 	width  int
 	height int
 
@@ -156,6 +169,13 @@ type model struct {
 	bootFrame    int
 	bootCh       chan ModelProgress
 	bootErr      error
+
+	// First-run API key wizard. It is modal: while setupActive is true the
+	// wizard owns every key, so chat, settings, confirm and boot never see a
+	// key until setup is saved or skipped. setupActive may be true at the same
+	// time as booting; the wizard is shown first and boot starts on close.
+	setupActive bool
+	setup       setupState
 }
 
 // run starts the bubbletea program and blocks until the user quits.
@@ -226,10 +246,19 @@ func newModel(opts Options) *model {
 	m.refreshChat()
 	m.refreshEvidence()
 	m.windows = []windowState{m.saveWindow()}
+	// The first-run wizard takes precedence over every other screen, but it
+	// does not cancel boot or confirm state: both resume after it closes.
+	if opts.SetupNeeded && opts.SetupApply != nil {
+		m.setupActive = true
+		m.setup = newSetupState(opts, lang)
+	}
 	return m
 }
 
 func (m *model) Init() tea.Cmd {
+	if m.setupActive {
+		return m.setupFocus()
+	}
 	if m.booting {
 		return m.startBoot()
 	}
@@ -243,6 +272,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// The first-run setup wizard owns every key while active. It must
+		// run before boot and reindex so no key can leak into another modal.
+		if m.setupActive {
+			return m, m.updateSetup(msg)
+		}
 		// Boot is the first modal of the session. Only ctrl+c is accepted
 		// while the model downloads, so no key can reach chat or settings.
 		if m.booting {
@@ -285,7 +319,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
 		case msg.String() == "esc":
-			return m, tea.Quit
+			// While a request runs, esc cancels the whole pipeline instead of
+			// quitting. When idle it is a no-op so a second esc after a cancel
+			// cannot exit the app by accident.
+			if m.busy {
+				m.cancelActive()
+			}
+			return m, nil
 		case key.Matches(msg, m.keys.QuitQ):
 			// Bare q quits only when the chat input is empty, so it never
 			// eats a letter the user is typing.
@@ -322,17 +362,44 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case answerMsg:
 		if msg.win != m.active {
-			m.routeAnswer(msg.win, func() { m.onAnswer(msg) })
+			m.routeAnswer(msg.win, func() {
+				if m.validGen(msg.gen) {
+					m.onAnswer(msg)
+				}
+			})
 			return m, nil
 		}
-		m.onAnswer(msg)
+		if m.validGen(msg.gen) {
+			m.onAnswer(msg)
+		}
 		return m, nil
 
 	case answerDeltaMsg:
 		if msg.win != m.active {
-			m.routeAnswer(msg.win, func() { m.onAnswerDelta(msg) })
-		} else {
+			m.routeAnswer(msg.win, func() {
+				if m.validGen(msg.gen) {
+					m.onAnswerDelta(msg)
+				}
+			})
+		} else if m.validGen(msg.gen) {
 			m.onAnswerDelta(msg)
+		}
+		// Re-arm the waiter even for stale messages so the producer channel
+		// always drains and terminates cleanly after a cancel.
+		if msg.ch == nil {
+			return m, nil
+		}
+		return m, waitAnswerStream(msg.ch)
+
+	case answerResetMsg:
+		if msg.win != m.active {
+			m.routeAnswer(msg.win, func() {
+				if m.validGen(msg.gen) {
+					m.onAnswerReset()
+				}
+			})
+		} else if m.validGen(msg.gen) {
+			m.onAnswerReset()
 		}
 		if msg.ch == nil {
 			return m, nil
@@ -341,11 +408,28 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case answerDoneMsg:
 		if msg.win != m.active {
-			m.routeAnswer(msg.win, func() { m.onAnswerDone(msg) })
-		} else {
+			m.routeAnswer(msg.win, func() {
+				if m.validGen(msg.gen) {
+					m.onAnswerDone(msg)
+				}
+			})
+		} else if m.validGen(msg.gen) {
 			m.onAnswerDone(msg)
 		}
 		return m, nil
+
+	case thinkingTickMsg:
+		// The chain is owned by the model, not one request: it must survive a
+		// tab switch and keep animating every busy tab in the tab bar.
+		if !m.anyWindowBusy() {
+			m.spinRunning = false
+			return m, nil
+		}
+		m.spinFrame++
+		if m.busy && !m.streaming {
+			m.refreshChat()
+		}
+		return m, thinkTick()
 
 	case commandResultMsg:
 		m.onCommandResult(msg)
@@ -403,6 +487,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.onBootDone(msg)
+
+	case setupApplyDoneMsg:
+		return m, m.onSetupApplyDone(msg)
 
 	case reindexProgressMsg:
 		if !m.reindexing {
@@ -525,11 +612,79 @@ func (m *model) ask(question string) tea.Cmd {
 	m.busy = true
 	m.streamText = ""
 	m.streaming = false
+	m.nextGen++
+	m.reqGen = m.nextGen
+	gen := m.reqGen
+
+	// One cancellable context spans intent classification, retrieval,
+	// reranking and generation, so esc stops the whole post-enter pipeline.
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if m.timeout > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), m.timeout)
+	} else {
+		ctx, cancel = context.WithCancel(context.Background())
+	}
+	m.cancel = cancel
+
 	m.refreshChat()
 	m.chatVP.GotoBottom()
 	// Snapshot the history so the Cmd goroutine never races with later turns.
 	hist := append([]agent.Turn(nil), m.history...)
-	return askCmd(m.opts, m.timeout, hist, question, m.active)
+	return askWithContext(m.opts, ctx, cancel, hist, question, m.active, gen, m.startSpin())
+}
+
+// startSpin launches the single shared spinner tick chain. Multiple busy
+// windows reuse it instead of each scheduling their own.
+func (m *model) startSpin() tea.Cmd {
+	if m.spinRunning {
+		return nil
+	}
+	m.spinRunning = true
+	return thinkTick()
+}
+
+// validGen reports whether a streamed message belongs to the current request.
+// gen == 0 is the untracked legacy path and is always accepted.
+func (m *model) validGen(gen uint64) bool {
+	return gen == 0 || gen == m.reqGen
+}
+
+// cancelActive cancels the in-flight request and invalidates every message it
+// may still deliver. The user's question stays in history; no assistant turn
+// or fabricated fallback is written.
+func (m *model) cancelActive() {
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+	m.nextGen++
+	m.reqGen = m.nextGen
+	m.busy = false
+	m.streaming = false
+	m.streamText = ""
+	m.appendChat(m.lang.T("chat.cancelled"), lineStatus)
+	m.chatVP.GotoBottom()
+}
+
+// thinkingLine renders the animated glyph plus the localized esc hint.
+func (m *model) thinkingLine() string {
+	frame := spinnerFrames[m.spinFrame%len(spinnerFrames)]
+	return "  " + frame + " " + m.lang.T("chat.thinking")
+}
+
+// focusCmd re-arms the shared spinner when a busy window becomes active
+// again after a switch, so the glyph never freezes mid-request.
+func (m *model) focusCmd() tea.Cmd {
+	focus := m.input.Focus()
+	if !m.anyWindowBusy() {
+		return focus
+	}
+	spin := m.startSpin()
+	if spin == nil {
+		return focus
+	}
+	return tea.Batch(focus, spin)
 }
 
 // onAnswerDelta appends one streamed delta to the live assistant text. The
@@ -544,6 +699,14 @@ func (m *model) onAnswerDelta(msg answerDeltaMsg) {
 	m.chatVP.GotoBottom()
 }
 
+// onAnswerReset drops tool-round preamble text and shows the spinner again
+// while the agent runs its next model round.
+func (m *model) onAnswerReset() {
+	m.streaming = false
+	m.streamText = ""
+	m.refreshChat()
+}
+
 // onAnswerDone clears the live text and reuses the normal answer path so
 // history, evidence and diagnostics are written exactly once.
 func (m *model) onAnswerDone(msg answerDoneMsg) {
@@ -554,6 +717,7 @@ func (m *model) onAnswerDone(msg answerDoneMsg) {
 
 func (m *model) onAnswer(msg answerMsg) {
 	m.busy = false
+	m.cancel = nil
 	if msg.err != nil {
 		m.appendChat(m.lang.T("chat.kb")+m.lang.Tf("chat.error", msg.err.Error()), lineError)
 	} else {
@@ -580,6 +744,13 @@ func (m *model) onAnswer(msg answerMsg) {
 	}
 	if msg.meta.FactsCount > 0 || msg.meta.HasSummary {
 		m.appendChat(m.lang.Tf("session.title", msg.meta.FactsCount), lineStatus)
+	}
+	if msg.meta.Degraded {
+		reason := msg.meta.Reason
+		if reason == "" {
+			reason = "degraded"
+		}
+		m.appendChat(m.lang.Tf("chat.degraded", reason), lineStatus)
 	}
 	m.refreshChat()
 	m.chatVP.GotoBottom()
@@ -696,7 +867,7 @@ func (m *model) refreshChat() {
 			write(wrapped)
 		}
 	} else if m.busy {
-		write(thinkingStyle.Render(m.lang.T("chat.thinking")))
+		write(thinkingStyle.Render(m.thinkingLine()))
 	}
 	m.chatVP.SetContent(b.String())
 }
@@ -867,6 +1038,9 @@ func (m *model) applySize(w, h int) {
 	if m.input.Width < 1 {
 		m.input.Width = 1
 	}
+	if m.setupActive {
+		m.setup.input.Width = max(w-4, 20)
+	}
 
 	// Settings master-detail geometry. Below 80 columns the rail is dropped
 	// and the original single scrolling list takes over.
@@ -960,6 +1134,9 @@ func (m *model) View() string {
 	}
 	if m.width < minWidth || m.height < minHeight {
 		return helpStyle.Render(m.lang.T("chat.terminal_small"))
+	}
+	if m.setupActive {
+		return m.setupView()
 	}
 	if m.booting {
 		return m.bootView()

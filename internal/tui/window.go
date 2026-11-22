@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -32,6 +33,12 @@ type windowState struct {
 	streamText        string
 	streaming         bool
 
+	// cancel and reqGen belong to the request this window owns. They travel
+	// with the snapshot so switching away never loses the ability to cancel
+	// or leaves stale stream messages landing in the wrong transcript.
+	cancel context.CancelFunc
+	reqGen uint64
+
 	runner agent.Answerer
 	sink   agent.Sink
 }
@@ -53,6 +60,8 @@ func (m *model) saveWindow() windowState {
 		evidenceCollapsed: m.evidenceCollapsed,
 		streamText:        m.streamText,
 		streaming:         m.streaming,
+		cancel:            m.cancel,
+		reqGen:            m.reqGen,
 		runner:            m.opts.Runner,
 		sink:              m.opts.Sink,
 	}
@@ -72,6 +81,8 @@ func (m *model) loadWindow(w windowState) {
 	m.evidenceCollapsed = w.evidenceCollapsed
 	m.streamText = w.streamText
 	m.streaming = w.streaming
+	m.cancel = w.cancel
+	m.reqGen = w.reqGen
 	if w.runner != nil {
 		m.opts.Runner = w.runner
 	}
@@ -113,12 +124,45 @@ func (m *model) runPrefixKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-// tabBarView renders one bottom row of window tabs. The active tab uses the
-// selected style so it stays visible without a cursor.
+// windowBusy reports whether window i has an in-flight request. The active
+// window lives in the model fields; inactive windows live in their snapshots.
+func (m *model) windowBusy(i int) bool {
+	if i == m.active {
+		return m.busy
+	}
+	if i >= 0 && i < len(m.windows) {
+		return m.windows[i].busy
+	}
+	return false
+}
+
+// anyWindowBusy keeps the shared spinner chain alive while any tab is
+// running, even after the user switches to an idle tab. m.windows[m.active]
+// is a stale snapshot, so the active window is read from m.busy directly.
+func (m *model) anyWindowBusy() bool {
+	if m.busy {
+		return true
+	}
+	for i := range m.windows {
+		if i != m.active && m.windows[i].busy {
+			return true
+		}
+	}
+	return false
+}
+
+// tabBarView renders one bottom row of window tabs. Every tab reserves one
+// fixed cell for the spinner: busy tabs show the rotating frame, idle tabs a
+// blank. The bar width therefore never changes when a request starts or ends.
 func (m *model) tabBarView() string {
+	frame := spinnerFrames[m.spinFrame%len(spinnerFrames)]
 	parts := make([]string, 0, len(m.windowTitles))
 	for i, title := range m.windowTitles {
-		tab := " " + title + " "
+		glyph := " "
+		if m.windowBusy(i) {
+			glyph = frame
+		}
+		tab := " " + glyph + " " + title + " "
 		if i == m.active {
 			parts = append(parts, tabActiveStyle.Render(tab))
 		} else {
@@ -216,6 +260,8 @@ func (m *model) newWindow() tea.Cmd {
 	m.evidenceCollapsed = false
 	m.streamText = ""
 	m.streaming = false
+	m.cancel = nil
+	m.reqGen = 0
 	if m.width > 0 && m.height > 0 {
 		m.applySize(m.width, m.height)
 	}
@@ -239,7 +285,7 @@ func (m *model) switchWindow(target int) tea.Cmd {
 	m.applySize(m.width, m.height)
 	m.refreshChat()
 	m.refreshEvidence()
-	return m.input.Focus()
+	return m.focusCmd()
 }
 
 // closeWindow removes the active window. The last window cannot be closed.
@@ -247,6 +293,12 @@ func (m *model) closeWindow() tea.Cmd {
 	n := len(m.windowTitles)
 	if n < 2 {
 		return nil
+	}
+	// Closing a window discards its in-flight request. Cancel it so the
+	// producer goroutine does not keep running until the timeout.
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
 	}
 	// The removed snapshot is dropped. The next active window is the one
 	// that followed it, or the new last entry when closing the tail.
@@ -261,7 +313,7 @@ func (m *model) closeWindow() tea.Cmd {
 	m.applySize(m.width, m.height)
 	m.refreshChat()
 	m.refreshEvidence()
-	return m.input.Focus()
+	return m.focusCmd()
 }
 
 // routeAnswer applies a message to a window other than the active one. It

@@ -43,8 +43,8 @@ func (f *fakeStreamAnswerer) AskStream(ctx context.Context, history []agent.Turn
 func driveStream(t *testing.T, m *model, cmd tea.Cmd) *model {
 	t.Helper()
 	batch, ok := cmd().(tea.BatchMsg)
-	if !ok || len(batch) != 2 {
-		t.Fatalf("ask stream cmd = %T, want a two-command batch", cmd())
+	if !ok || len(batch) < 2 {
+		t.Fatalf("ask stream cmd = %T, want a waiter + producer batch", cmd())
 	}
 	if msg := batch[1](); msg != nil {
 		t.Fatalf("stream producer returned a message %T", msg)
@@ -87,8 +87,8 @@ func TestStreamDeltasRenderIncrementally(t *testing.T) {
 	}
 
 	batch, ok := cmd().(tea.BatchMsg)
-	if !ok || len(batch) != 2 {
-		t.Fatalf("ask stream cmd = %T", cmd())
+	if !ok || len(batch) < 2 {
+		t.Fatalf("ask stream cmd = %T, want a waiter + producer batch", cmd())
 	}
 	if msg := batch[1](); msg != nil {
 		t.Fatalf("stream producer returned a message %T", msg)

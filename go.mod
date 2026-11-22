@@ -7,7 +7,8 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/ledongthuc/pdf v0.0.0-20260907135840-6c8c28e0e8a0
-	github.com/projanvil/langchain-golang v0.14.1
+	github.com/muesli/termenv v0.16.0
+	github.com/projanvil/langchain-golang v0.14.3
 	github.com/rostamlabs/rembed v0.3.0
 	github.com/spf13/cobra v1.10.2
 	github.com/townsendmerino/aikit v1.78.0
@@ -33,7 +34,6 @@ require (
 	github.com/mattn/go-runewidth v0.0.19 // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
-	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/tiktoken-go/tokenizer v0.8.1 // indirect

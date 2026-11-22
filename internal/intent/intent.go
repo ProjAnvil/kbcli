@@ -134,9 +134,10 @@ func (c *Classifier) ruleRoute(msg string) Decision {
 	if deepHintRE.MatchString(lower) {
 		return Decision{Intent: DeepRAG, Engine: EngineRule, Reason: "deep_hints"}
 	}
-	if []rune(msg)[0] < 128 && len([]rune(msg)) < 12 && !domainHintRE.MatchString(lower) {
-		return Decision{Intent: Direct, Engine: EngineRule, Reason: "short_smalltalk"}
-	}
+	// Short questions still reach the knowledge base. The old "<12 ASCII
+	// runes -> direct" heuristic silently bypassed grounding for "why?",
+	// "how?" and similar follow-ups that clearly need evidence. Greetings and
+	// smalltalk are already handled by the two anchored regexes above.
 	return Decision{Intent: QuickRAG, Engine: EngineRule, Reason: "default"}
 }
 

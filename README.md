@@ -8,7 +8,7 @@ This document is also available in Simplified Chinese: [README.zh-CN.md](README.
 
 Chat with any local document directory from a single Go binary — no server, no vector database, no cloud account.
 
-`kbcli` turns one directory into one portable `.kbvec` vector file and opens a three-view terminal UI: a two-pane chat, a settings screen, and an index confirmation dialog. It is offline-first out of the box: the default embedder is a zero-dependency in-process hashing model, and when the chat backend is unreachable the answer falls back to a deterministic extractive answer with `[n]` citations. Indexing is always an explicit command; startup never scans or builds anything.
+`kbcli` turns one directory into one portable `.kbvec` vector file and opens a four-view terminal UI: a two-pane chat, a settings screen, an index confirmation dialog, and a first-run API key wizard. It is offline-first out of the box: the default embedder is a zero-dependency in-process hashing model, and when the chat backend is unreachable the answer falls back to a deterministic extractive answer with `[n]` citations. Indexing is always an explicit command; startup never scans or builds anything.
 
 Schematic of the chat view (not a screenshot):
 
@@ -35,13 +35,14 @@ Schematic of the chat view (not a screenshot):
 
 - One portable `.kbvec` per directory: magic header `KBCLI\x00`, gob payload, atomic rename via `os.Rename`. Legacy `.kbcli.kbvec` still loads, and embedder-domain isolation refuses an index built by a different embedder.
 - Two embedders, both 384-dimensional and L2-normalized: a zero-dependency in-process hashing model (FNV-1a word unigrams + character 3-grams) and an optional pure-Go `rembed` neural model.
-- Chat backends for both OpenAI-compatible Chat Completions and the Anthropic Messages API (`chat_provider`, `base_url`, `model`, `api_key`); when the backend is unreachable, answers degrade to a deterministic extractive answer from the top evidence with `[n]` citations.
-- Porto-derived retrieval: `vector` / `bm25` / weighted-RRF `hybrid` (k=60), with **local `aikit` cross-encoder reranking on by default** (no service, no Python, no cgo); external HTTP `cross_encoder` and `llm` reranking remain configurable, as do `hyde` / `multi_query` / `decomposition` / `step_back` query transforms, an anaphora condense gate, and kbcli's own `min_score` and `context_expand`.
-- Porto-derived intent router: `direct` skips retrieval, `quick_rag` searches the original question, `deep_rag` runs the full pipeline. The intent provider inherits global settings by default.
-- Three full-screen `bubbletea` + `bubbles` + `lipgloss` views with a theme that follows the terminal background (OSC 11, or `COLORFGBG`): a two-pane chat (conversation left, ranked evidence right; `ctrl+]` collapses the evidence pane), a master-detail settings screen (group rail + detail pane), and an index confirmation dialog.
+- Chat backends for both OpenAI-compatible Chat Completions and the Anthropic Messages API (`chat_provider`, `base_url`, `model`, `api_key`). A first-run TUI wizard collects the provider, a masked API key, the endpoint and the model, runs a short connectivity check, and rebuilds the live agent in place; `ctrl+s` skips it for offline use. When the backend is unreachable, answers degrade to a deterministic extractive answer from the top evidence with `[n]` citations.
+- Porto-derived retrieval: `vector` / `bm25` / weighted-RRF `hybrid` (k=60), with **local `aikit` cross-encoder reranking on by default** (no service, no Python, no cgo). A broad `candidate_k` pool (default 40) feeds reranking, `min_score` is applied to normalized post-rerank scores, the original question is recalled alongside a condensed rewrite, and one shared citation ledger numbers both the grounded prompt and `kb_search` results. Empty or failed retrieval returns an explicit refusal instead of a fabricated answer. External HTTP `cross_encoder` and `llm` reranking remain configurable, as do `hyde` / `multi_query` / `decomposition` / `step_back` query transforms, an anaphora condense gate, and kbcli's own `context_expand`.
+- Porto-derived intent router: `direct` skips retrieval, `quick_rag` searches the original question, `deep_rag` runs the full pipeline. The intent provider inherits global settings by default. Short questions such as `why?` no longer bypass the knowledge base.
+- Structure-aware chunking: a Strategy + Registry selects a splitter per file extension (Markdown headings, CSV row groups, HTML headings, PDF pages, DOCX sections) so one chunk stays inside one section; `chunk_strategy: fixed` restores the legacy single-size splitter.
+- Four full-screen `bubbletea` + `bubbles` + `lipgloss` views with a theme that follows the terminal background (OSC 11, or `COLORFGBG`): a two-pane chat (conversation left, ranked evidence right; `ctrl+]` collapses the evidence pane), a master-detail settings screen (group rail + detail pane), an index confirmation dialog, and the first-run API key wizard.
 - Bilingual English / Simplified Chinese UI and prompts, selected by `language` (`en`|`zh`); English is byte-for-byte the original UI.
 - Per-workspace session memory at `~/.kbcli/sessions/<sha256(root)[:16]>.json` (mode `0600`): 4 fact categories (`user_decision`, `user_preference`, `project_context`, `open_question`), Jaccard dedup, cap eviction, history compaction, injected every round.
-- A settings catalog of exactly 46 fields in 7 groups (Foundation, Ingestion, Retrieval, Rerank, Query Transform, Intent, Session), of which exactly 21 are numeric (`FieldInt` or `FieldFloat`), with sparse per-workspace overrides and an INDEX STALE banner driven by a version-2 build signature.
+- A settings catalog of exactly 49 fields in 7 groups (Foundation, Ingestion, Retrieval, Rerank, Query Transform, Intent, Session), of which exactly 23 are numeric (`FieldInt` or `FieldFloat`), with sparse per-workspace overrides and an INDEX STALE banner driven by a version-2 build signature.
 
 ## Install
 
@@ -66,7 +67,7 @@ Each GitHub release publishes two tiers of archives per platform. Asset names ca
 Extract an archive and run the binary from the extracted directory (replace the example name with your version and platform):
 
 ```sh
-tar -xzf kbcli-full-v0.2.0-darwin-arm64.tar.gz   # Windows: unzip kbcli-full-v0.2.0-windows-amd64.zip
+tar -xzf kbcli-full-v0.3.0-darwin-arm64.tar.gz   # Windows: unzip kbcli-full-v0.3.0-windows-amd64.zip
 ./kbcli
 ```
 
@@ -94,7 +95,7 @@ sha256sum -c checksums.txt --ignore-missing
 Install a released version directly with `go install`:
 
 ```sh
-go install github.com/ProjAnvil/kbcli/cmd/kbcli@v0.2.0
+go install github.com/ProjAnvil/kbcli/cmd/kbcli@v0.3.0
 # or
 go install github.com/ProjAnvil/kbcli/cmd/kbcli@latest
 ```
@@ -116,14 +117,16 @@ Inside the TUI, type `:index <dir>` to index a different directory (two-step con
 
 Startup never indexes. If `.kbvec` exists in the current directory, chat starts immediately; otherwise the chat pane shows a hint to type `:index <dir>` or run `kbcli index <dir>`. No scan and no parent-directory walk happen at startup.
 
-CLI subcommands: `index`, `reindex`, `update`, `config`, `settings`, `search`, `version`. In-TUI commands: `:reindex`, `:update`, `:settings`, `:stale`, `:clear`, `:help`, `:index`, `:q` (also `q` on an empty input line). `q`, `esc` and `ctrl+c` also quit.
+CLI subcommands: `index`, `reindex`, `update`, `config`, `settings`, `search`, `version`. In-TUI commands: `:reindex`, `:update`, `:settings`, `:stale`, `:clear`, `:help`, `:index`, `:q` (also `q` on an empty input line). `q` and `ctrl+c` quit; `esc` cancels an in-flight answer instead of quitting.
+
+Answers stream into the chat pane as the model produces them. The thinking indicator spins from the moment `enter` is pressed until the first answer token arrives — covering intent routing, retrieval, reranking and generation. Press `esc` at any point during that window to cancel the whole request; a cancelled run writes no assistant turn and no fallback answer into the session. Tool-call preambles are discarded from the live transcript, so only the final answer round reaches the chat.
 
 ## Configuration
 
 Global settings live in `~/.kbcli/config.yaml` (mode `0600`). Per-workspace overrides are sparse and live in `~/.kbcli/settings.json`: a workspace inherits `config.yaml` and overrides only the keys you set.
 
 ```sh
-kbcli config keys              # all 46 keys with group, type and range
+kbcli config keys              # all 49 keys with group, type and range
 kbcli config list              # effective values, secrets masked
 kbcli config get top_k
 kbcli config set top_k 9
@@ -134,19 +137,32 @@ kbcli settings set top_k 9     # one sparse workspace override
 
 `chat_provider` selects the chat API protocol: `openai` (default, OpenAI-compatible Chat Completions) or `anthropic` (Anthropic Messages API). `base_url` must point to an endpoint compatible with the chosen protocol. When using the official Anthropic API, leave `base_url` unset or set it to `https://api.anthropic.com/v1` — the agent automatically falls back to the protocol-appropriate default URL (the default OpenAI `base_url` is only correct for `openai`).
 
+### First-run API key setup
+
+When no `api_key` is configured and setup has not been dismissed, kbcli opens a full-screen wizard before chat. Step through `chat_provider` (left/right toggles, `enter` confirms), a masked `api_key`, `base_url` and `model`; `enter` advances, `esc` goes back, and on the last step `enter` saves. kbcli validates the config, runs a 5-second HTTP probe against `base_url` (any HTTP response counts as reachable), writes `~/.kbcli/config.yaml` with mode `0600`, and rebuilds the agent, retriever and session so the new key takes effect without a restart. A failed probe only adds a warning — the config is still saved. `ctrl+s` (or `s` on the first step) skips the wizard and records `setup_done: true`, keeping kbcli fully offline. You can also avoid the wizard entirely with `kbcli config set api_key sk-...`.
+
 Reranking is **on by default**: `rerank_enabled: true`, `rerank_type: aikit`, and `rerank_model: ms-marco-MiniLM-L-6-v2`. With `rerank_model_path` empty, the model lives in the managed directory `~/.kbcli/model/ms-marco-MiniLM-L-6-v2/`. On the first run of a normal release, kbcli opens a boot screen with an ASCII logo and a byte-level progress bar while it downloads the five model files (~92 MB). Chat stays blocked until the download or copy finishes. Set `rerank_model_path` to an existing local model directory to skip the boot screen. See [Local cross-encoder reranking](#local-cross-encoder-reranking) for details and for the external HTTP and LLM options.
 
 `intent_mode` selects the router: `off`, `binary` (`direct` or `rag`), or `adaptive` (`direct`, `quick_rag`, `deep_rag`). The default is `adaptive`. A `direct` message skips retrieval and gets one short answer. A `quick_rag` message searches the original question without condense or query transforms. A `deep_rag` message runs the full pipeline.
 
 Configure the classifier with `intent_provider`, `intent_api_key`, `intent_base_url` and `intent_model`. The default `intent_provider: inherit` reuses the global chat provider, endpoint, model and key. Leave the three credential fields empty to inherit their global values. An unusable classifier falls back to keyword rules, then to the full RAG path.
 
-The [settings screen](#settings-screen) (`:settings`) edits the same catalog in the TUI. Changing an index-affecting key — `chunk_size`, `chunk_overlap`, `embedder`, `embed_model` — is recorded in a version-2 build signature; on load, drift raises an **INDEX STALE** banner. Run `:reindex` (or `kbcli reindex`) to rebuild.
+The [settings screen](#settings-screen) (`:settings`) edits the same catalog in the TUI. Changing an index-affecting key — `chunk_size`, `chunk_overlap`, `section_size`, `chunk_strategy`, `embedder`, `embed_model` — is recorded in the build signature (now also versioned with the `per-ext-v1` chunker); on load, drift raises an **INDEX STALE** banner. Run `:reindex` (or `kbcli reindex`) to rebuild. Query-time knobs such as `candidate_k` do not invalidate the index.
 
-### Chunk size and overlap
+### Chunking by file type
 
-kbcli's defaults now match LangChain's `RecursiveCharacterTextSplitter` character-splitting defaults: `chunk_size: 4000` and `chunk_overlap: 200`. kbcli counts **Go runes**, the Unicode code-point analogue of Python's `len()` in LangChain, rather than tokens.
+A 4000-rune hard split is fine for plain text but merges unrelated sections in structured files. `chunk_strategy: auto` (the default) selects a structure-aware splitter per extension through a Strategy + Registry; `chunk_strategy: fixed` forces the legacy single-size splitter on every format.
 
-Token-based splitters exist and use model-specific tokenizers; kbcli's rune setting is the user-facing, model-independent analogue. If you select `embedder: rembed`, kbcli additionally caps chunks at that model's token limit at split time — the rune configuration remains the user-facing setting.
+| Extensions | Strategy | Size cap |
+|---|---|---|
+| `.md`, `.markdown`, `.mdx` | Markdown headings (h1–h4), with the heading path injected into the embedding text | `section_size` |
+| `.txt`, `.text` | Plain-text recursive split | `chunk_size` |
+| `.csv` | Row groups | `section_size` |
+| `.html`, `.htm` | HTML headings | `section_size` |
+| `.pdf` | One page | `section_size` |
+| `.docx` | Converted Markdown sections | `section_size` |
+
+`chunk_size: 4000` and `chunk_overlap: 200` still match LangChain's `RecursiveCharacterTextSplitter` defaults, but `chunk_size` now caps **plain-text chunks only**. Structured formats are capped per section by `section_size` (default 1000 runes); an over-long section is recursively split instead of being merged into its neighbour. kbcli counts **Go runes**, the Unicode code-point analogue of Python's `len()`, rather than tokens. If you select `embedder: rembed`, chunks are additionally capped at that model's token limit at split time.
 
 ### Local cross-encoder reranking
 
@@ -192,7 +208,7 @@ All rerank settings are query-time only and never invalidate the `.kbvec`
 index. Any load or scoring error fails open and keeps the original retrieval
 order.
 
-Both `chunk_size` and `chunk_overlap` are index-affecting: changing either invalidates the `.kbvec` index and requires a reindex (`:reindex` / `kbcli reindex`). Let recall@k guide tuning.
+`chunk_size`, `chunk_overlap`, `section_size` and `chunk_strategy` are index-affecting: changing any of them invalidates the `.kbvec` index and requires a reindex (`:reindex` / `kbcli reindex`). `candidate_k` is query-time only. Let recall@k guide tuning.
 
 Background: [LangChain text splitters](https://python.langchain.com/docs/concepts/text_splitters/).
 
@@ -214,11 +230,13 @@ A tab bar sits above the help line and highlights the active window. `ctrl+x w` 
 
 Each window keeps its own transcript, evidence and session memory. The prefix times out after 750 ms. Keys pressed after the prefix never reach the text input. `ctrl+c` still quits.
 
+Switching tabs never stops a running request. Every tab reserves one fixed cell in the tab bar for a spinner; a busy tab shows the rotating frame there even when it is in the background, so the bar width never jumps when a request starts or finishes. Switch back to that tab and press `esc` to cancel it.
+
 <a id="settings-screen"></a>
 
 ### Settings screen
 
-`:settings` opens a master-detail view: a group rail on the left, a detail pane on the right. The catalog has exactly **46 fields** in **7 groups** — Foundation, Ingestion, Retrieval, Rerank, Query Transform, Intent, Session — and exactly **21** of them are numeric (`FieldInt` or `FieldFloat`). Only fields you mark are written as sparse overrides; everything else keeps its global value. The **INDEX STALE** banner appears at the top when the loaded index was built with different index-affecting settings; press `r` (or `:reindex`) to rebuild in place.
+`:settings` opens a master-detail view: a group rail on the left, a detail pane on the right. The catalog has exactly **49 fields** in **7 groups** — Foundation, Ingestion, Retrieval, Rerank, Query Transform, Intent, Session — and exactly **23** of them are numeric (`FieldInt` or `FieldFloat`). Only fields you mark are written as sparse overrides; everything else keeps its global value. The **INDEX STALE** banner appears at the top when the loaded index was built with different index-affecting settings; press `r` (or `:reindex`) to rebuild in place.
 
 ### Embedding models and reindexing
 
@@ -240,7 +258,7 @@ internal/retrieval/ BM25, weighted RRF, rerank, query transforms, condense gate
 internal/agent/    OpenAI-compatible chat, evidence, fallback answers
 internal/session/  per-workspace memory and facts
 internal/i18n/     English / Simplified Chinese catalogs
-internal/tui/      three-view bubbletea TUI (chat, settings, confirmation)
+internal/tui/      bubbletea TUI (chat, settings, confirmation, setup wizard)
 internal/cli/      cobra commands
 internal/app/      orchestration shared by CLI and TUI
 ```

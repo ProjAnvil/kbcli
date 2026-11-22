@@ -21,7 +21,9 @@ func TestSearchToolFormatsHitsAndPublishes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Invoke: %v", err)
 	}
-	want := "[1] doc1.md (score 0.900)\nbody 1\n[2] doc2.md (score 0.800)\nbody 2\n"
+	// The tool uses the same citation renderer as the grounded prompt, so
+	// numbers and formatting can never drift between the two evidence paths.
+	want := "[1] doc1.md score=0.900\nbody 1\n\n[2] doc2.md score=0.800\nbody 2"
 	if res.Content != want {
 		t.Fatalf("formatted content =\n%q\nwant\n%q", res.Content, want)
 	}

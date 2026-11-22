@@ -261,12 +261,20 @@ func TestIngestDOCXStructure(t *testing.T) {
 	}
 	assertChunkInvariants(t, res.Chunks)
 	var all strings.Builder
+	headingFound := false
 	for _, c := range res.Chunks {
 		all.WriteString(c.Body)
+		if strings.Contains(c.Heading, "登录模块") {
+			headingFound = true
+		}
 	}
-	for _, want := range []string{"# 登录模块", "支持手机号验证码登录。", "| phone | string |"} {
+	// The DOCX -> Markdown strategy lifts the heading into Chunk.Heading.
+	if !headingFound {
+		t.Errorf("docx heading missing from Chunk.Heading: %v", headingsOf(res.Chunks))
+	}
+	for _, want := range []string{"支持手机号验证码登录。", "| phone | string |"} {
 		if !strings.Contains(all.String(), want) {
-			t.Errorf("docx markdown missing %q:\n%s", want, all.String())
+			t.Errorf("docx body missing %q:\n%s", want, all.String())
 		}
 	}
 }
@@ -609,5 +617,313 @@ func TestIngestMarkdownShortBodyIncluded(t *testing.T) {
 	}
 	if strings.Contains(c.Body, "# Title") {
 		t.Errorf("Body %q contains literal heading", c.Body)
+	}
+}
+
+// TestStrategyRegistryMapsEverySupportedExtension verifies that the auto and
+// fixed registries resolve every supported extension, that unknown extensions
+// fall back to plain text, that lookup is case-insensitive, and that the
+// descriptive strategy table covers the full extension set.
+func TestStrategyRegistryMapsEverySupportedExtension(t *testing.T) {
+	auto := autoRegistry()
+	fixed := fixedRegistry()
+	for _, ext := range supportedExtList() {
+		s := auto.For(ext)
+		if s == nil {
+			t.Errorf("autoRegistry().For(%q) is nil", ext)
+			continue
+		}
+		if s.Name() == "" {
+			t.Errorf("autoRegistry().For(%q) has an empty Name", ext)
+		}
+		if got := fixed.For(ext); got == nil || got.Name() != "fixed" {
+			t.Errorf("fixedRegistry().For(%q) did not resolve to fixed", ext)
+		}
+	}
+	if f := auto.For(".unknown"); f == nil || f.Name() != "plain_text" {
+		t.Errorf("unknown extension did not fall back to plain text")
+	}
+	if auto.For(".MDX").Name() != auto.For(".mdx").Name() {
+		t.Errorf("extension lookup is not case-insensitive")
+	}
+
+	covered := map[string]bool{}
+	for _, entry := range StrategyTable() {
+		if entry.Strategy == "" || entry.SizeField == "" {
+			t.Errorf("strategy table entry has empty descriptors: %+v", entry)
+		}
+		for _, ext := range entry.Extensions {
+			covered[strings.ToLower(ext)] = true
+		}
+	}
+	for _, ext := range supportedExtList() {
+		if !covered[ext] {
+			t.Errorf("StrategyTable does not cover %q", ext)
+		}
+	}
+}
+
+// TestAutoVsFixedMarkdownStructure checks that the auto registry header-splits
+// .mdx into hierarchical headings while the fixed registry routes .mdx through
+// the legacy plain-text splitter, and that the two produce different layouts.
+func TestAutoVsFixedMarkdownStructure(t *testing.T) {
+	dir := t.TempDir()
+	body := strings.Repeat("lorem ipsum dolor sit amet ", 60)
+	mdx := "# A\n\n" + body + "\n\n## B\n\n" + body + "\n\n## C\n\n" + body + "\n"
+	p := writeFile(t, dir, "doc.mdx", []byte(mdx))
+
+	autoOpts := DefaultOptions()
+	autoOpts.ChunkStrategy = StrategyAuto
+	autoOpts.SectionSize = 200
+	autoRes, err := ChunkFile(dir, p, autoOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixedOpts := DefaultOptions()
+	fixedOpts.ChunkStrategy = StrategyFixed
+	fixedOpts.SectionSize = 200
+	fixedRes, err := ChunkFile(dir, p, fixedOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertChunkInvariants(t, autoRes.Chunks)
+	assertChunkInvariants(t, fixedRes.Chunks)
+
+	autoHasPath := false
+	for _, c := range autoRes.Chunks {
+		if c.Heading != "" && strings.Contains(c.Heading, " > ") {
+			autoHasPath = true
+			break
+		}
+	}
+	if !autoHasPath {
+		t.Fatalf("auto strategy lost the heading path: %v", headingsOf(autoRes.Chunks))
+	}
+	for _, c := range fixedRes.Chunks {
+		if strings.Contains(c.Heading, " > ") {
+			t.Errorf("fixed strategy produced a hierarchical heading %q", c.Heading)
+		}
+	}
+	if len(autoRes.Chunks) == len(fixedRes.Chunks) {
+		t.Fatalf("auto and fixed produced identical chunk counts: %d", len(autoRes.Chunks))
+	}
+}
+
+// TestSectionSizeControlsStructuredChunking checks that a smaller SectionSize
+// yields more chunks for a structured .md source and that no body overflows the
+// cap by more than a small heading allowance.
+func TestSectionSizeControlsStructuredChunking(t *testing.T) {
+	dir := t.TempDir()
+	body := strings.Repeat("structured section body ", 300)
+	md := "# Long Section\n\n" + body + "\n"
+	p := writeFile(t, dir, "long.md", []byte(md))
+
+	smallOpts := DefaultOptions()
+	smallOpts.ChunkStrategy = StrategyAuto
+	smallOpts.SectionSize = 200
+	smallRes, err := ChunkFile(dir, p, smallOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	largeOpts := DefaultOptions()
+	largeOpts.ChunkStrategy = StrategyAuto
+	largeOpts.SectionSize = 2000
+	largeRes, err := ChunkFile(dir, p, largeOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertChunkInvariants(t, smallRes.Chunks)
+	assertChunkInvariants(t, largeRes.Chunks)
+
+	if len(smallRes.Chunks) <= len(largeRes.Chunks) {
+		t.Fatalf("SectionSize=200 gave %d chunks, SectionSize=2000 gave %d", len(smallRes.Chunks), len(largeRes.Chunks))
+	}
+	const headingAllowance = 100
+	for _, c := range smallRes.Chunks {
+		if n := runeLen(c.Body); n > 200+headingAllowance {
+			t.Errorf("chunk body has %d runes, cap is 200 (+%d allowance)", n, headingAllowance)
+		}
+	}
+}
+
+// TestPlainTextUsesChunkSizeNotSectionSize checks that plain text is governed by
+// ChunkSize and ignores SectionSize, so the two knobs stay independent.
+func TestPlainTextUsesChunkSizeNotSectionSize(t *testing.T) {
+	dir := t.TempDir()
+	text := strings.Repeat("plain text content ", 200)
+	p := writeFile(t, dir, "note.txt", []byte(text))
+
+	base := DefaultOptions()
+	base.ChunkStrategy = StrategyAuto
+	base.ChunkSize = 600
+	withSection := base
+	withSection.SectionSize = 60
+	biggerChunk := base
+	biggerChunk.ChunkSize = 1200
+
+	baseRes, err := ChunkFile(dir, p, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sectionRes, err := ChunkFile(dir, p, withSection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunkRes, err := ChunkFile(dir, p, biggerChunk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertChunkInvariants(t, baseRes.Chunks)
+	assertChunkInvariants(t, sectionRes.Chunks)
+	assertChunkInvariants(t, chunkRes.Chunks)
+
+	if len(baseRes.Chunks) != len(sectionRes.Chunks) {
+		t.Errorf("SectionSize changed the plain-text chunk count: %d vs %d", len(baseRes.Chunks), len(sectionRes.Chunks))
+	}
+	if len(baseRes.Chunks) <= len(chunkRes.Chunks) {
+		t.Errorf("ChunkSize=600 (%d chunks) should exceed ChunkSize=1200 (%d chunks)", len(baseRes.Chunks), len(chunkRes.Chunks))
+	}
+}
+
+// TestCSVRepeatsHeaderPerChunk checks that every CSV chunk begins with the
+// header line and that every data row appears exactly once across all bodies.
+func TestCSVRepeatsHeaderPerChunk(t *testing.T) {
+	dir := t.TempDir()
+	const header = "id,name,value"
+	var b strings.Builder
+	b.WriteString(header + "\n")
+	var rows []string
+	for i := 0; i < 40; i++ {
+		rows = append(rows, fmt.Sprintf("row%02d,item%02d,%d", i, i, i*7))
+	}
+	b.WriteString(strings.Join(rows, "\n"))
+	b.WriteString("\n")
+	p := writeFile(t, dir, "data.csv", []byte(b.String()))
+
+	opts := DefaultOptions()
+	opts.ChunkStrategy = StrategyAuto
+	opts.SectionSize = 120
+	res, err := ChunkFile(dir, p, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Chunks) < 2 {
+		t.Fatalf("expected several CSV chunks, got %d", len(res.Chunks))
+	}
+	assertChunkInvariants(t, res.Chunks)
+
+	seen := map[string]int{}
+	for _, c := range res.Chunks {
+		lines := strings.Split(c.Body, "\n")
+		if len(lines) == 0 || lines[0] != header {
+			t.Errorf("chunk body does not start with the header line: %q", c.Body)
+		}
+		for _, ln := range lines[1:] {
+			if ln != "" {
+				seen[ln]++
+			}
+		}
+	}
+	for _, row := range rows {
+		if seen[row] != 1 {
+			t.Errorf("row %q appeared %d times, want 1", row, seen[row])
+		}
+	}
+	if len(seen) != len(rows) {
+		t.Errorf("distinct rows = %d, want %d", len(seen), len(rows))
+	}
+}
+
+// TestHTMLHeadingsBecomeChunkHeadings checks that HTML h1/h2 tags are turned
+// into chunk headings and that no raw heading tag survives in any body.
+func TestHTMLHeadingsBecomeChunkHeadings(t *testing.T) {
+	dir := t.TempDir()
+	paragraph := strings.Repeat("paragraph content ", 80)
+	html := "<html><body><h1>Alpha</h1><p>" + paragraph + "</p><h2>Beta</h2><p>" + paragraph + "</p></body></html>"
+	p := writeFile(t, dir, "page.html", []byte(html))
+
+	opts := DefaultOptions()
+	opts.ChunkStrategy = StrategyAuto
+	res, err := ChunkFile(dir, p, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Chunks) == 0 {
+		t.Fatal("no chunks produced from HTML")
+	}
+	assertChunkInvariants(t, res.Chunks)
+
+	foundAlpha, foundBeta := false, false
+	for _, c := range res.Chunks {
+		if strings.Contains(c.Heading, "Alpha") {
+			foundAlpha = true
+		}
+		if strings.Contains(c.Heading, "Beta") {
+			foundBeta = true
+		}
+		if strings.Contains(c.Body, "<h1") || strings.Contains(c.Body, "<h2") {
+			t.Errorf("raw heading tag survived in body: %q", c.Body)
+		}
+	}
+	if !foundAlpha {
+		t.Errorf("no chunk heading contains Alpha: %v", headingsOf(res.Chunks))
+	}
+	if !foundBeta {
+		t.Errorf("no chunk heading contains Beta: %v", headingsOf(res.Chunks))
+	}
+}
+
+// TestFixedStrategyMatchesLegacyForMarkdown checks that StrategyFixed routes a
+// .md file through the same path as the legacy chunkMarkdown and that a .txt
+// file ignores SectionSize in fixed mode.
+func TestFixedStrategyMatchesLegacyForMarkdown(t *testing.T) {
+	dir := t.TempDir()
+	body := strings.Repeat("alpha beta gamma ", 120)
+	md := "# Alpha\n\n" + body + "\n\n## Beta\n\n" + body + "\n"
+	p := writeFile(t, dir, "doc.md", []byte(md))
+
+	opts := DefaultOptions()
+	opts.ChunkStrategy = StrategyFixed
+	res, err := ChunkFile(dir, p, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertChunkInvariants(t, res.Chunks)
+
+	meta := chunkMeta{Source: relPath(dir, p), Title: titleOf(p)}
+	legacy, err := chunkMarkdown(md, meta, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertChunkInvariants(t, legacy)
+
+	if len(res.Chunks) != len(legacy) {
+		t.Fatalf("fixed mode produced %d chunks, legacy chunkMarkdown produced %d", len(res.Chunks), len(legacy))
+	}
+	for i := range res.Chunks {
+		if res.Chunks[i].Heading != legacy[i].Heading {
+			t.Errorf("chunk %d Heading = %q, legacy = %q", i, res.Chunks[i].Heading, legacy[i].Heading)
+		}
+		if res.Chunks[i].Body != legacy[i].Body {
+			t.Errorf("chunk %d Body differs from legacy", i)
+		}
+	}
+
+	txt := strings.Repeat("plain words here ", 100)
+	tp := writeFile(t, dir, "note.txt", []byte(txt))
+	noSection := opts
+	noSection.SectionSize = 0
+	withSection := opts
+	withSection.SectionSize = 120
+	r1, err := ChunkFile(dir, tp, noSection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := ChunkFile(dir, tp, withSection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r1.Chunks) != len(r2.Chunks) {
+		t.Errorf("fixed .txt chunk count changed with SectionSize: %d vs %d", len(r1.Chunks), len(r2.Chunks))
 	}
 }
