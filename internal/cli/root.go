@@ -10,7 +10,6 @@ import (
 
 	"github.com/ProjAnvil/kbcli/internal/app"
 	"github.com/ProjAnvil/kbcli/internal/config"
-	"github.com/ProjAnvil/kbcli/internal/rerankmodel"
 )
 
 // errNoIndex is returned by commands that need an existing vector file.
@@ -49,13 +48,9 @@ func NewRootCmd(cfg *config.Config, version string) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("open knowledge base: %w", err)
 			}
-			// Provision the managed reranker model before the TUI starts. This
-			// is synchronous: chat input cannot open until downloads finish.
-			if _, err := a.EnsureRerankModel(cmd.Context(), func(p rerankmodel.Progress) {
-				printModelProgress(cmd.ErrOrStderr(), p)
-			}); err != nil {
-				return fmt.Errorf("ensure rerank model: %w", err)
-			}
+			// The TUI owns model provisioning. On first run it opens a boot
+			// screen with an ASCII logo and byte-level progress bar, and keeps
+			// chat blocked until the model is ready.
 			return a.TUI()
 		},
 	}

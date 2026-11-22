@@ -236,6 +236,11 @@ func TestMinScoreAndContextExpand(t *testing.T) {
 	cfg := config.Default()
 	cfg.MinScore = 0.5
 	cfg.ContextExpand = 1
+	// This test covers min_score and context expansion only. Reranking is on by
+	// default and replaces vector scores with unnormalized cross-encoder logits
+	// whenever the model is present, so disable it to keep the assertions on a
+	// stable 0..1 scale and independent of the local model cache.
+	cfg.RerankEnabled = false
 	store := &fakeStore{chunks: chunks, hits: vectorHits, root: "/kb", rev: 1}
 	r, err := New(Options{Config: cfg, Store: store})
 	if err != nil {
@@ -246,16 +251,27 @@ func TestMinScoreAndContextExpand(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, h := range hits {
-		if h.Chunk.ID == "b" && h.Score >= 0.5 {
+		if h.Chunk.ID == "b" {
 			t.Fatal("min_score did not drop the low-scoring vector hit")
 		}
+	}
+	parentScore := 0.0
+	foundParent := false
+	for _, h := range hits {
+		if h.Chunk.ID == "a" {
+			parentScore = h.Score
+			foundParent = true
+		}
+	}
+	if !foundParent {
+		t.Fatal("parent hit missing")
 	}
 	foundExpansion := false
 	for _, h := range hits {
 		if h.Chunk.ID == "a2" {
 			foundExpansion = true
-			if h.Score >= 0.9 {
-				t.Fatal("expanded chunk should score below its parent")
+			if h.Score >= parentScore {
+				t.Fatalf("expanded chunk score %g should be below its parent %g", h.Score, parentScore)
 			}
 		}
 	}

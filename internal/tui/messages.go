@@ -14,12 +14,58 @@ import (
 	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
-// answerMsg carries the result of one agent question back to Update.
+// answerMsg carries the result of one agent question back to Update. win is
+// the window index that asked; zero keeps single-window tests unchanged.
 type answerMsg struct {
 	answer string
 	hits   []index.Hit
 	err    error
 	meta   agent.AnswerMeta
+	win    int
+}
+
+// answerStreamCh carries streamed answer items out of the producer goroutine.
+// Deltas and the terminal result share one channel so ordering is preserved.
+type answerStreamCh chan tea.Msg
+
+// answerDeltaMsg carries one streamed text delta. ch lets Update pull the next
+// item; a nil ch is allowed in tests that drive a single delta by hand.
+type answerDeltaMsg struct {
+	text string
+	ch   answerStreamCh
+	win  int
+}
+
+// answerDoneMsg carries the final result of a streamed answer. It is always
+// the last item on the stream channel.
+type answerDoneMsg struct {
+	answer string
+	hits   []index.Hit
+	err    error
+	meta   agent.AnswerMeta
+	win    int
+}
+
+// waitAnswerStream pulls one item from the stream channel. Update re-arms it
+// after every delta so the terminal result is delivered as its own tea.Msg.
+func waitAnswerStream(ch answerStreamCh) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return msg
+	}
+}
+
+// prefixTimeoutMsg cancels a pending window prefix. A short delay keeps the
+// prefix from lingering when the user changes their mind.
+type prefixTimeoutMsg struct{}
+
+func prefixTimeout() tea.Cmd {
+	return tea.Tick(750*time.Millisecond, func(time.Time) tea.Msg {
+		return prefixTimeoutMsg{}
+	})
 }
 
 // commandResultMsg carries the status line returned by a slash command.
@@ -159,6 +205,60 @@ func (m *model) startReindex(from screen) tea.Cmd {
 	)
 }
 
+// Startup model provisioning messages. A buffered channel carries byte-level
+// progress out of the EnsureModel goroutine; a tick drives the spinner. The
+// modal is closed by bootDoneMsg on both success and error.
+type bootProgressMsg struct{ p ModelProgress }
+type bootSpinTickMsg struct{}
+type bootDoneMsg struct{ err error }
+
+func (m *model) waitBootProgress() tea.Cmd {
+	ch := m.bootCh
+	return func() tea.Msg {
+		p, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return bootProgressMsg{p: p}
+	}
+}
+
+func bootSpinTick() tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg {
+		return bootSpinTickMsg{}
+	})
+}
+
+// startBoot switches the model into the modal boot view immediately. Only
+// ctrl+c is accepted until bootDoneMsg, so chat cannot open with a missing
+// model.
+func (m *model) startBoot() tea.Cmd {
+	m.booting = true
+	m.bootErr = nil
+	m.bootFrame = 0
+	if m.bootCh == nil {
+		m.bootCh = make(chan ModelProgress, 128)
+	}
+	ch := m.bootCh
+	run := m.opts.EnsureModel
+	return tea.Batch(
+		bootSpinTick(),
+		m.waitBootProgress(),
+		func() tea.Msg {
+			if run == nil {
+				return bootDoneMsg{err: fmt.Errorf("tui: model setup unavailable")}
+			}
+			err := run(func(p ModelProgress) {
+				select {
+				case ch <- p:
+				default:
+				}
+			})
+			return bootDoneMsg{err: err}
+		},
+	)
+}
+
 // Error lets errMsg satisfy the error interface for wrapping/logging.
 func (e errMsg) Error() string {
 	if e.err == nil {
@@ -167,9 +267,47 @@ func (e errMsg) Error() string {
 	return e.err.Error()
 }
 
+// askStreamCmd runs a streaming answerer off the Update loop. A buffered
+// channel turns each delta into its own tea.Msg and delivers the final result
+// last, so partial text never overtakes the completion.
+func askStreamCmd(opts Options, timeout time.Duration, sa agent.StreamAnswerer, history []agent.Turn, question string, win int) tea.Cmd {
+	ch := make(answerStreamCh, 256)
+	produce := func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		answer, hits, err := sa.AskStream(ctx, history, question, func(delta string) {
+			if delta == "" {
+				return
+			}
+			select {
+			case ch <- answerDeltaMsg{text: delta, ch: ch, win: win}:
+			case <-ctx.Done():
+			}
+		})
+		var meta agent.AnswerMeta
+		if reporter, ok := opts.Runner.(agent.MetaAnswerer); ok {
+			meta = reporter.LastMeta()
+		}
+		done := answerDoneMsg{answer: answer, hits: hits, meta: meta, win: win}
+		if err != nil {
+			done.err = fmt.Errorf("tui: ask: %w", err)
+		}
+		ch <- done
+		close(ch)
+		return nil
+	}
+	// The waiter reads while the producer fills the channel. Both commands
+	// run concurrently, so deltas never block the producer on a full buffer.
+	return tea.Batch(waitAnswerStream(ch), produce)
+}
+
 // askCmd runs the answerer off the Update loop. history is a snapshot supplied
-// by the caller so the goroutine never races with subsequent turns.
-func askCmd(opts Options, timeout time.Duration, history []agent.Turn, question string) tea.Cmd {
+// by the caller so the goroutine never races with subsequent turns. When the
+// runner supports streaming, deltas arrive as separate messages.
+func askCmd(opts Options, timeout time.Duration, history []agent.Turn, question string, win int) tea.Cmd {
+	if sa, ok := opts.Runner.(agent.StreamAnswerer); ok && sa != nil {
+		return askStreamCmd(opts, timeout, sa, history, question, win)
+	}
 	return func() tea.Msg {
 		if opts.Runner == nil {
 			lang := i18n.LangEn
@@ -186,9 +324,9 @@ func askCmd(opts Options, timeout time.Duration, history []agent.Turn, question 
 			meta = reporter.LastMeta()
 		}
 		if err != nil {
-			return answerMsg{err: fmt.Errorf("tui: ask: %w", err), meta: meta}
+			return answerMsg{err: fmt.Errorf("tui: ask: %w", err), meta: meta, win: win}
 		}
-		return answerMsg{answer: answer, hits: hits, meta: meta}
+		return answerMsg{answer: answer, hits: hits, meta: meta, win: win}
 	}
 }
 

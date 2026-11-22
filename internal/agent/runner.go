@@ -15,6 +15,7 @@ import (
 	"github.com/ProjAnvil/kbcli/internal/retrieval"
 	"github.com/ProjAnvil/kbcli/internal/session"
 	"github.com/projanvil/langchain-golang/core/messages"
+	"github.com/projanvil/langchain-golang/core/runnables"
 	coretools "github.com/projanvil/langchain-golang/core/tools"
 	"github.com/projanvil/langchain-golang/deepagents"
 	"github.com/projanvil/langchain-golang/deepagents/backends"
@@ -31,6 +32,12 @@ type invoker interface {
 	Invoke(ctx context.Context, msgs []messages.Message) ([]messages.Message, error)
 }
 
+// streamInvoker is the *agents.Agent slice needed for SSE-style streaming. It
+// is separate from invoker so tests can stub Invoke without a stream.
+type streamInvoker interface {
+	StreamEvents(ctx context.Context, msgs []messages.Message) (runnables.Stream[agents.StreamEvent], error)
+}
+
 // runner orchestrates retrieval, the agent, session memory, and evidence
 // publication.
 type runner struct {
@@ -39,6 +46,7 @@ type runner struct {
 	retriever  retrieval.Retriever
 	sink       Sink
 	agent      invoker
+	streamer   streamInvoker
 	sess       *session.Store
 	classifier *intent.Classifier
 	complete   retrieval.CompleteFunc
@@ -102,11 +110,16 @@ func newRunner(cfg *config.Config, store index.Store, sink Sink, sess *session.S
 		retriever:  ret,
 		sink:       sink,
 		agent:      ag,
+		streamer:   ag,
 		sess:       sess,
 		classifier: intent.New(cfg, intent.CompleteFunc(complete)),
 		complete:   complete,
 	}, nil
 }
+
+// answerFunc runs the configured agent on the assembled messages and returns
+// the final answer. It is the only difference between Ask and AskStream.
+type answerFunc func(context.Context, []messages.Message) (string, error)
 
 // Ask classifies the message, retrieves evidence through the selected route,
 // runs the agent, and returns the ranked hits. When the classifier, retrieval,
@@ -114,6 +127,87 @@ func newRunner(cfg *config.Config, store index.Store, sink Sink, sess *session.S
 // deterministic answer, so the TUI stays useful offline. Errors are never
 // surfaced.
 func (r *runner) Ask(ctx context.Context, history []Turn, question string) (string, []index.Hit, error) {
+	return r.ask(ctx, history, question, r.invokeAnswer)
+}
+
+// AskStream mirrors Ask but delivers each model text delta to onDelta as it
+// arrives. onDelta runs on the caller's goroutine and is never called
+// concurrently. A broken or empty stream fails open to the Invoke path so a
+// streaming failure never breaks the chat.
+func (r *runner) AskStream(ctx context.Context, history []Turn, question string, onDelta func(string)) (string, []index.Hit, error) {
+	return r.ask(ctx, history, question, func(ctx context.Context, msgs []messages.Message) (string, error) {
+		answer, err := r.streamAnswer(ctx, msgs, onDelta)
+		if err != nil {
+			return r.invokeAnswer(ctx, msgs)
+		}
+		return answer, nil
+	})
+}
+
+// invokeAnswer runs the agent through Invoke and extracts the last AI message.
+func (r *runner) invokeAnswer(ctx context.Context, msgs []messages.Message) (string, error) {
+	out, err := r.agent.Invoke(ctx, msgs)
+	if err != nil {
+		return "", err
+	}
+	answer := lastAIAnswer(out)
+	if answer == "" {
+		return "", errors.New("no AI message in agent output")
+	}
+	return answer, nil
+}
+
+// streamAnswer drains the agent event stream, sending every model_delta text
+// to onDelta in order. It returns the assembled answer, or an error so the
+// caller can fall back to Invoke.
+func (r *runner) streamAnswer(ctx context.Context, msgs []messages.Message, onDelta func(string)) (string, error) {
+	if r.streamer == nil {
+		return "", errors.New("agent: streaming unavailable")
+	}
+	stream, err := r.streamer.StreamEvents(ctx, msgs)
+	if err != nil {
+		return "", err
+	}
+	defer stream.Close()
+
+	var b strings.Builder
+	for {
+		ev, ok, err := stream.Next(ctx)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			break
+		}
+		switch ev.Type {
+		case agents.StreamModelDelta:
+			if ev.Text == "" {
+				continue // non-text delta, nothing to render
+			}
+			b.WriteString(ev.Text)
+			if onDelta != nil {
+				onDelta(ev.Text)
+			}
+		case agents.StreamEnd:
+			if ev.Err != nil {
+				return "", ev.Err
+			}
+			// Some models emit only a terminal message without deltas.
+			if b.Len() == 0 && ev.Message != nil && ev.Message.Content != "" {
+				return ev.Message.Content, nil
+			}
+		}
+	}
+	answer := b.String()
+	if strings.TrimSpace(answer) == "" {
+		return "", errors.New("agent: empty answer stream")
+	}
+	return answer, nil
+}
+
+// ask holds the retrieval, routing, session and evidence logic shared by Ask
+// and AskStream. answerFn is the only branch that differs.
+func (r *runner) ask(ctx context.Context, history []Turn, question string, answerFn answerFunc) (string, []index.Hit, error) {
 	turns := make([]retrieval.Turn, 0, len(history))
 	for _, t := range history {
 		turns = append(turns, retrieval.Turn{Role: t.Role, Content: t.Content})
@@ -204,11 +298,7 @@ func (r *runner) Ask(ctx context.Context, history []Turn, question string) (stri
 	base := buildMessagesLang(history, question, sys)
 	msgs = append(msgs, base[1:]...)
 
-	out, invokeErr := r.agent.Invoke(ctx, msgs)
-	var answer string
-	if invokeErr == nil {
-		answer = lastAIAnswer(out)
-	}
+	answer, invokeErr := answerFn(ctx, msgs)
 	if answer == "" {
 		if invokeErr == nil {
 			invokeErr = errors.New("no AI message in agent output")

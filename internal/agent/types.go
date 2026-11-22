@@ -51,6 +51,15 @@ type MetaAnswerer interface {
 	LastMeta() AnswerMeta
 }
 
+// StreamAnswerer is an optional Answerer extension that delivers answer text
+// incrementally. onDelta is called once per text delta, in order, from the
+// caller's goroutine. It returns the full assembled answer, the ranked hits
+// and any error. Implementations must fail open like Ask.
+type StreamAnswerer interface {
+	Answerer
+	AskStream(ctx context.Context, history []Turn, question string, onDelta func(string)) (string, []index.Hit, error)
+}
+
 // NewSink creates an empty evidence sink. Implemented in evidence.go.
 func NewSink() Sink {
 	return newSink()

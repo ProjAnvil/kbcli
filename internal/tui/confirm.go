@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -44,7 +45,7 @@ func confirmTarget(line string) (bool, string) {
 }
 
 func (m *model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.String() == "ctrl+c" {
+	if key.Matches(msg, quitKey) {
 		return m, tea.Quit
 	}
 	// While indexing the dialog is modal: no key can start a second build.
@@ -293,22 +294,6 @@ func reindexPhaseLabel(lang i18n.Lang, phase string) string {
 	default:
 		return phase
 	}
-}
-
-// reindexView is the full-screen modal shown while a reindex (including
-// embedding-model loading) runs. Chat is blocked until reindexDoneMsg clears
-// it, and only phase-level progress is available from rembed.Load.
-func (m *model) reindexView() string {
-	p := m.reindexProgress
-	frame := spinnerFrames[m.reindexFrame%len(spinnerFrames)]
-	var b strings.Builder
-	b.WriteString(settingsHeaderStyle.Render(m.lang.T("reindex.title")))
-	b.WriteString("\n\n")
-	b.WriteString(settingsStatusStyle.Render(m.lang.Tf("reindex.progress",
-		frame, reindexPhaseLabel(m.lang, p.Phase), p.FilesDone, p.FilesTotal, p.Chunks, p.Current)))
-	b.WriteString("\n\n")
-	b.WriteString(helpStyle.Render(m.lang.T("reindex.hint")))
-	return b.String()
 }
 
 // openConfirm re-runs the preflight for the :index command.

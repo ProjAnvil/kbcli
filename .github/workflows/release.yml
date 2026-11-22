@@ -64,6 +64,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF_NAME}"
+          NOTES=".github/release-notes/${TAG}.md"
           (cd dist && sha256sum kbcli-* > checksums.txt)
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+          # Prefer curated release notes checked into the repo. Releases without
+          # a notes file fall back to GitHub-generated notes.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            if [ -f "$NOTES" ]; then gh release edit "$TAG" --notes-file "$NOTES"; fi
+          elif [ -f "$NOTES" ]; then
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$NOTES"
+          else
+            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+          fi
           gh release upload "$TAG" dist/* --clobber

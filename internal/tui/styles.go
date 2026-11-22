@@ -47,4 +47,16 @@ var (
 
 	inputStyle = lipgloss.NewStyle().Foreground(colorText)
 	helpStyle  = lipgloss.NewStyle().Foreground(colorMuted)
+
+	// tabActiveStyle and tabInactiveStyle render one browser-style tab row.
+	// Padding is horizontal only, so each tab stays a single line.
+	tabActiveStyle = lipgloss.NewStyle().
+			Foreground(colorText).
+			Background(colorAccent).
+			Bold(true).
+			Padding(0, 1)
+	tabInactiveStyle = lipgloss.NewStyle().
+				Foreground(colorMuted).
+				Background(colorHighlight).
+				Padding(0, 1)
 )

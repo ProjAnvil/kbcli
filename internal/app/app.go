@@ -113,10 +113,40 @@ func OpenFresh(cfg *config.Config, root string) (*App, error) {
 	}, nil
 }
 
+// NewWindow builds a fresh runner and sink for TUI window id. The session
+// file key derives from the workspace plus the id, so each window keeps its
+// own turns and facts. Failures fall back to a runner without session memory.
+func (a *App) NewWindow(id int) (agent.Answerer, agent.Sink) {
+	a.mu.RLock()
+	store, cfg, root, base := a.store, a.cfg, a.root, a.runner
+	a.mu.RUnlock()
+	// No index means there is no runner to clone. Stay silent: writing to
+	// stderr here leaks into the alt-screen TUI and corrupts a rendered row.
+	if store == nil || base == nil {
+		return base, nil
+	}
+	sink := agent.NewSink()
+	sess := openSessionKeyed(cfg, root, fmt.Sprintf("window-%d", id))
+	runner, err := agent.NewWithSession(cfg, store, sink, sess)
+	if err != nil {
+		runner, err = agent.New(cfg, store, sink)
+		if err != nil {
+			return base, nil
+		}
+	}
+	return runner, sink
+}
+
 // openSession attaches Porto-style per-workspace session memory. A broken
 // session file must never prevent the app from starting, so failures degrade
 // to in-memory-only chat with a stderr note.
 func openSession(cfg *config.Config, root string) *session.Store {
+	return openSessionKeyed(cfg, root, "")
+}
+
+// openSessionKeyed derives the session file key from root and key. An empty
+// key keeps the original per-workspace session identity.
+func openSessionKeyed(cfg *config.Config, root, key string) *session.Store {
 	if !cfg.SessionEnabled {
 		return nil
 	}
@@ -125,9 +155,13 @@ func openSession(cfg *config.Config, root string) *session.Store {
 		fmt.Fprintf(os.Stderr, "kbcli: session directory: %v\n", err)
 		return nil
 	}
+	sessionKey := root
+	if key != "" {
+		sessionKey = root + "#" + key
+	}
 	st, err := session.Open(session.Options{
 		Dir:                 dir,
-		Workspace:           root,
+		Workspace:           sessionKey,
 		Lang:                i18n.Parse(cfg.Language),
 		Enabled:             true,
 		FactsEnabled:        cfg.FactsEnabled,
@@ -152,16 +186,35 @@ func (a *App) Session() *session.Store {
 	return a.sess
 }
 
-// EnsureRerankModel provisions the managed cross-encoder model when aikit
-// reranking is enabled without an explicit model path. It reports whether any
-// work was done. The CLI calls it synchronously before starting the TUI, so
-// chat input cannot open until the model is present.
-func (a *App) EnsureRerankModel(ctx context.Context, onProgress func(rerankmodel.Progress)) (bool, error) {
+// managedRerankModel reports the model name and directory when the managed
+// cross-encoder is in use, or two empty strings when it is not.
+func (a *App) managedRerankModel() (string, string) {
 	cfg := a.cfg
 	if cfg == nil || !cfg.RerankEnabled || cfg.RerankType != config.RerankAikit || strings.TrimSpace(cfg.RerankModelPath) != "" {
+		return "", ""
+	}
+	return cfg.RerankModel, config.ModelDir(cfg.RerankModel)
+}
+
+// NeedsRerankModel reports whether the managed cross-encoder is missing files.
+// The TUI uses it to decide whether to open on the boot screen.
+func (a *App) NeedsRerankModel() bool {
+	name, dir := a.managedRerankModel()
+	if name == "" {
+		return false
+	}
+	return !rerankmodel.IsComplete(dir)
+}
+
+// EnsureRerankModel provisions the managed cross-encoder model when aikit
+// reranking is enabled without an explicit model path. It reports whether any
+// work was done.
+func (a *App) EnsureRerankModel(ctx context.Context, onProgress func(rerankmodel.Progress)) (bool, error) {
+	name, dir := a.managedRerankModel()
+	if name == "" {
 		return false, nil
 	}
-	return ensureRerankModel(ctx, cfg.RerankModel, config.ModelDir(cfg.RerankModel), onProgress)
+	return ensureRerankModel(ctx, name, dir, onProgress)
 }
 
 // IndexRoot reads the source directory recorded in a vector file header
@@ -683,13 +736,31 @@ func (a *App) TUI() error {
 	a.mu.RLock()
 	store, runner, sink, indexPath := a.store, a.runner, a.sink, a.indexPath
 	a.mu.RUnlock()
+	var ensureModel func(func(tui.ModelProgress)) error
+	if a.NeedsRerankModel() {
+		ensureModel = func(progress func(tui.ModelProgress)) error {
+			_, err := a.EnsureRerankModel(context.Background(), func(p rerankmodel.Progress) {
+				progress(tui.ModelProgress{
+					Phase:      p.Phase,
+					File:       p.File,
+					Downloaded: p.Downloaded,
+					Total:      p.Total,
+					FilesDone:  p.FilesDone,
+					FilesTotal: p.FilesTotal,
+				})
+			})
+			return err
+		}
+	}
 	return tui.Run(tui.Options{
-		Config:    a.cfg,
-		Store:     store,
-		Runner:    runner,
-		Sink:      sink,
-		IndexPath: indexPath,
-		OnCommand: a.HandleCommand,
+		Config:      a.cfg,
+		Store:       store,
+		Runner:      runner,
+		Sink:        sink,
+		IndexPath:   indexPath,
+		OnCommand:   a.HandleCommand,
+		EnsureModel: ensureModel,
+		NewWindow:   a.NewWindow,
 		Refresh: func() (index.Store, agent.Answerer) {
 			a.mu.RLock()
 			defer a.mu.RUnlock()

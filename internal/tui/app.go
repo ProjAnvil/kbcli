@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -25,9 +26,9 @@ const (
 	// reservedRows are the rows the viewports do not own: one header row,
 	// the two border rows (top + bottom) around each pane, the input row and
 	// the help row. So viewport height = terminal height - reservedRows.
-	reservedRows = 5
+	reservedRows = 6 // header, two pane borders, input, tab bar, help
 
-	helpLine      = "enter send · :settings / :reindex / :update / :help / :clear / :q · tab · ctrl+] evidence · pgup/pgdn · q/ctrl+c quit"
+	helpLine      = "enter send · :settings / :reindex / :update / :help / :q · ctrl+x windows · tab · ctrl+] evidence · q/ctrl+c quit"
 	thinkingLabel = "  ⠋ thinking..."
 	emptyEvidence = "No evidence yet. Ask a question."
 	welcomeLine   = "kbcli ready. Ask a question, type :settings to configure, or :help for commands."
@@ -65,6 +66,16 @@ type chatLine struct {
 
 type model struct {
 	opts Options
+	keys keyMap
+
+	// Windows hold snapshots of inactive chat sessions. The active window
+	// lives in the model fields below, so existing chat code stays unchanged.
+	windows       []windowState
+	windowTitles  []string
+	active        int
+	prefixPending bool
+	pickerOpen    bool
+	pickerCursor  int
 
 	chatVP     viewport.Model
 	evidenceVP viewport.Model
@@ -78,6 +89,11 @@ type model struct {
 	focus             focus
 	ready             bool
 	evidenceCollapsed bool
+
+	// In-flight streamed assistant text. It is rendered as a live line while
+	// deltas arrive, then promoted into history once the done message lands.
+	streamText string
+	streaming  bool
 
 	width  int
 	height int
@@ -131,6 +147,15 @@ type model struct {
 	reindexCh       chan IndexProgress
 	reindexFrom     screen
 	reindexErr      error
+
+	// Startup model provisioning. The boot view shows an ASCII logo and a
+	// byte-level progress bar. It is modal: only ctrl+c is accepted until the
+	// model is present, so chat cannot start with a missing reranker.
+	booting      bool
+	bootProgress ModelProgress
+	bootFrame    int
+	bootCh       chan ModelProgress
+	bootErr      error
 }
 
 // run starts the bubbletea program and blocks until the user quits.
@@ -162,7 +187,10 @@ func newModel(opts Options) *model {
 
 	m := &model{
 		opts:         opts,
+		keys:         newKeyMap(lang),
 		lang:         lang,
+		windowTitles: []string{"1"},
+		active:       0,
 		chatVP:       viewport.New(1, 1),
 		evidenceVP:   viewport.New(1, 1),
 		input:        ti,
@@ -181,6 +209,12 @@ func newModel(opts Options) *model {
 	m.confirm.pathInput = pi
 	m.confirm.dirInput = di
 	m.confirm.ch = make(chan IndexProgress, 64)
+	if opts.EnsureModel != nil {
+		// Model provisioning is modal and starts on the first tick. Screen
+		// state underneath is untouched; bootView covers it until done.
+		m.booting = true
+		m.bootProgress = ModelProgress{Phase: "checking", Total: 1, FilesTotal: 1}
+	}
 	if opts.IndexReport != nil {
 		m.screen = screenConfirm
 		m.confirm.report = *opts.IndexReport
@@ -191,10 +225,14 @@ func newModel(opts Options) *model {
 	}
 	m.refreshChat()
 	m.refreshEvidence()
+	m.windows = []windowState{m.saveWindow()}
 	return m
 }
 
 func (m *model) Init() tea.Cmd {
+	if m.booting {
+		return m.startBoot()
+	}
 	return m.input.Focus()
 }
 
@@ -205,10 +243,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Boot is the first modal of the session. Only ctrl+c is accepted
+		// while the model downloads, so no key can reach chat or settings.
+		if m.booting {
+			if key.Matches(msg, m.keys.Quit) {
+				return m, tea.Quit
+			}
+			return m, nil
+		}
 		// Reindex is modal on every screen. This must precede confirm/settings
 		// routing so no key (not even settings' r) can start a second build.
 		if m.reindexing {
-			if msg.String() == "ctrl+c" {
+			if key.Matches(msg, m.keys.Quit) {
 				return m, tea.Quit
 			}
 			return m, nil
@@ -221,32 +267,84 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.screen == screenSettings {
 			return m.updateSettings(msg)
 		}
-		switch msg.String() {
-		case "ctrl+c", "esc":
+		// The window picker owns every key while open. Enter activates the
+		// highlighted window; esc cancels without changing windows.
+		if m.pickerOpen {
+			return m, m.updatePicker(msg)
+		}
+		// A pending prefix consumes the next key as a window command. The key
+		// never reaches the text input, so typed letters stay untouched.
+		if m.prefixPending {
+			return m, m.runPrefixKey(msg)
+		}
+		if key.Matches(msg, m.keys.Prefix) {
+			m.prefixPending = true
+			return m, prefixTimeout()
+		}
+		switch {
+		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
-		case "q":
+		case msg.String() == "esc":
+			return m, tea.Quit
+		case key.Matches(msg, m.keys.QuitQ):
 			// Bare q quits only when the chat input is empty, so it never
 			// eats a letter the user is typing.
 			if strings.TrimSpace(m.input.Value()) == "" {
 				return m, tea.Quit
 			}
-		case "tab":
+		case key.Matches(msg, m.keys.Focus):
 			m.toggleFocus()
 			return m, nil
-		case "ctrl+]":
+		case key.Matches(msg, m.keys.Evidence):
 			m.toggleEvidence()
 			return m, nil
-		case "pgup", "pgdown", "up", "down":
-			m.scrollFocused(msg.String())
+		case key.Matches(msg, m.keys.PageUp):
+			m.scrollFocused("pgup")
 			return m, nil
-		case "enter":
+		case key.Matches(msg, m.keys.PageDown):
+			m.scrollFocused("pgdown")
+			return m, nil
+		case key.Matches(msg, m.keys.Up):
+			m.scrollFocused("up")
+			return m, nil
+		case key.Matches(msg, m.keys.Down):
+			m.scrollFocused("down")
+			return m, nil
+		case key.Matches(msg, m.keys.Send):
 			return m, m.submit()
 		}
 		// Unhandled keys (printable runes, backspace) fall through to the
 		// text input forwarding below.
 
+	case prefixTimeoutMsg:
+		m.prefixPending = false
+		return m, nil
+
 	case answerMsg:
+		if msg.win != m.active {
+			m.routeAnswer(msg.win, func() { m.onAnswer(msg) })
+			return m, nil
+		}
 		m.onAnswer(msg)
+		return m, nil
+
+	case answerDeltaMsg:
+		if msg.win != m.active {
+			m.routeAnswer(msg.win, func() { m.onAnswerDelta(msg) })
+		} else {
+			m.onAnswerDelta(msg)
+		}
+		if msg.ch == nil {
+			return m, nil
+		}
+		return m, waitAnswerStream(msg.ch)
+
+	case answerDoneMsg:
+		if msg.win != m.active {
+			m.routeAnswer(msg.win, func() { m.onAnswerDone(msg) })
+		} else {
+			m.onAnswerDone(msg)
+		}
 		return m, nil
 
 	case commandResultMsg:
@@ -285,6 +383,26 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.onIndexDone(msg)
+
+	case bootProgressMsg:
+		if !m.booting {
+			return m, nil
+		}
+		m.bootProgress = msg.p
+		return m, m.waitBootProgress()
+
+	case bootSpinTickMsg:
+		if !m.booting {
+			return m, nil
+		}
+		m.bootFrame++
+		return m, bootSpinTick()
+
+	case bootDoneMsg:
+		if !m.booting {
+			return m, nil
+		}
+		return m, m.onBootDone(msg)
 
 	case reindexProgressMsg:
 		if !m.reindexing {
@@ -405,11 +523,33 @@ func (m *model) ask(question string) tea.Cmd {
 	m.appendChat(m.lang.T("chat.you")+question, lineUser)
 	m.history = append(m.history, agent.Turn{Role: "user", Content: question})
 	m.busy = true
+	m.streamText = ""
+	m.streaming = false
 	m.refreshChat()
 	m.chatVP.GotoBottom()
 	// Snapshot the history so the Cmd goroutine never races with later turns.
 	hist := append([]agent.Turn(nil), m.history...)
-	return askCmd(m.opts, m.timeout, hist, question)
+	return askCmd(m.opts, m.timeout, hist, question, m.active)
+}
+
+// onAnswerDelta appends one streamed delta to the live assistant text. The
+// spinner is hidden as soon as text starts arriving.
+func (m *model) onAnswerDelta(msg answerDeltaMsg) {
+	if msg.text == "" {
+		return
+	}
+	m.streaming = true
+	m.streamText += msg.text
+	m.refreshChat()
+	m.chatVP.GotoBottom()
+}
+
+// onAnswerDone clears the live text and reuses the normal answer path so
+// history, evidence and diagnostics are written exactly once.
+func (m *model) onAnswerDone(msg answerDoneMsg) {
+	m.streaming = false
+	m.streamText = ""
+	m.onAnswer(answerMsg{answer: msg.answer, hits: msg.hits, err: msg.err, meta: msg.meta})
 }
 
 func (m *model) onAnswer(msg answerMsg) {
@@ -460,6 +600,22 @@ func (m *model) onCommandResult(msg commandResultMsg) {
 		m.opts.Store = store
 		m.opts.Runner = runner
 	}
+}
+
+// onBootDone closes the boot modal only on success. A failure keeps chat
+// blocked and shows the error, so the user can retry after fixing the model.
+func (m *model) onBootDone(msg bootDoneMsg) tea.Cmd {
+	if msg.err != nil {
+		m.bootErr = msg.err
+		return nil
+	}
+	m.booting = false
+	m.bootProgress.Phase = "done"
+	if m.bootProgress.Total > 0 {
+		m.bootProgress.Downloaded = m.bootProgress.Total
+	}
+	m.bootProgress.FilesDone = m.bootProgress.FilesTotal
+	return m.input.Focus()
 }
 
 // onReindexDone leaves the modal on either outcome, restores the originating
@@ -533,7 +689,13 @@ func (m *model) refreshChat() {
 			write(wrapped)
 		}
 	}
-	if m.busy {
+	if m.streaming {
+		// Live answer text replaces the spinner while deltas arrive.
+		live := chatLine{text: m.lang.T("chat.kb") + m.streamText, kind: lineAssistant}
+		for _, wrapped := range wrapChatLine(live, m.leftInner) {
+			write(wrapped)
+		}
+	} else if m.busy {
 		write(thinkingStyle.Render(m.lang.T("chat.thinking")))
 	}
 	m.chatVP.SetContent(b.String())
@@ -782,6 +944,9 @@ func (m *model) chatHeader() string {
 	if ver == "" {
 		ver = "dev"
 	}
+	if title := m.windowTitle(); title != "" && len(m.windowTitles) > 1 {
+		return m.lang.Tf("window.header", root, ver, title)
+	}
 	return m.lang.Tf("app.header", root, ver)
 }
 
@@ -795,6 +960,9 @@ func (m *model) View() string {
 	}
 	if m.width < minWidth || m.height < minHeight {
 		return helpStyle.Render(m.lang.T("chat.terminal_small"))
+	}
+	if m.booting {
+		return m.bootView()
 	}
 	if m.reindexing {
 		return m.reindexView()
@@ -819,20 +987,24 @@ func (m *model) View() string {
 	leftBox := leftPane.Render(m.chatVP.View())
 	panesRow := leftBox
 
+	var view string
 	if m.evidenceCollapsed {
 		inputRow := inputStyle.Render(m.input.View())
 		helpRow := helpStyle.Render(truncate(m.lang.T("chat.help_collapsed"), m.width))
-		return lipgloss.JoinVertical(lipgloss.Left, headerRow, panesRow, inputRow, helpRow)
+		view = lipgloss.JoinVertical(lipgloss.Left, headerRow, panesRow, inputRow, m.tabBarView(), helpRow)
+	} else {
+		rightW := m.rightInner + 2
+		rightHeader := headerStyle.Width(rightW).Render(truncate(m.evidenceHeader(), rightW))
+		headerRow = lipgloss.JoinHorizontal(lipgloss.Top, leftHeader, rightHeader)
+		rightBox := rightPane.Render(m.evidenceVP.View())
+		panesRow = lipgloss.JoinHorizontal(lipgloss.Top, leftBox, rightBox)
+
+		inputRow := inputStyle.Render(m.input.View())
+		helpRow := helpStyle.Render(truncate(m.lang.T("chat.help"), m.width))
+		view = lipgloss.JoinVertical(lipgloss.Left, headerRow, panesRow, inputRow, m.tabBarView(), helpRow)
 	}
-
-	rightW := m.rightInner + 2
-	rightHeader := headerStyle.Width(rightW).Render(truncate(m.evidenceHeader(), rightW))
-	headerRow = lipgloss.JoinHorizontal(lipgloss.Top, leftHeader, rightHeader)
-	rightBox := rightPane.Render(m.evidenceVP.View())
-	panesRow = lipgloss.JoinHorizontal(lipgloss.Top, leftBox, rightBox)
-
-	inputRow := inputStyle.Render(m.input.View())
-	helpRow := helpStyle.Render(truncate(m.lang.T("chat.help"), m.width))
-
-	return lipgloss.JoinVertical(lipgloss.Left, headerRow, panesRow, inputRow, helpRow)
+	if m.pickerOpen {
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.pickerView())
+	}
+	return view
 }

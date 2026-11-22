@@ -47,6 +47,18 @@ type IndexProgress struct {
 	Current    string
 }
 
+// ModelProgress is one checkpoint emitted while the managed reranker model is
+// downloaded or copied at startup. It mirrors rerankmodel.Progress without
+// coupling the TUI to that package.
+type ModelProgress struct {
+	Phase      string
+	File       string
+	Downloaded int64
+	Total      int64
+	FilesDone  int
+	FilesTotal int
+}
+
 // IndexFunc builds an index for root. It runs inside a tea.Cmd goroutine; the
 // progress callback must be non-blocking.
 type IndexFunc func(root string, progress func(IndexProgress)) (int, error)
@@ -82,6 +94,15 @@ type Options struct {
 	// ReindexWithProgress rebuilds the live index and reports phase-level
 	// progress. While it runs the TUI is modal and chat input is blocked.
 	ReindexWithProgress ReindexFunc
+	// EnsureModel provisions the managed reranker model. It is non-nil only
+	// when a download or copy is actually needed. When set, the TUI opens on
+	// a boot screen with an ASCII logo and a byte-level progress bar, and
+	// blocks chat until the call returns.
+	EnsureModel func(progress func(ModelProgress)) error
+	// NewWindow builds a fresh runner and evidence sink for a new window.
+	// Each window needs its own session memory; sharing one runner makes
+	// conversations overwrite each other. When nil, the first runner is reused.
+	NewWindow func(id int) (agent.Answerer, agent.Sink)
 	// WorkspaceRoot is the directory the session was opened for. The :index
 	// command defaults to it, not to the process working directory.
 	WorkspaceRoot string

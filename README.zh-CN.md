@@ -66,7 +66,7 @@ make install    # go install ./cmd/kbcli
 解压后从解压目录运行二进制（请将示例名称换成你的版本与平台）：
 
 ```sh
-tar -xzf kbcli-full-v0.1.2-darwin-arm64.tar.gz   # Windows：unzip kbcli-full-v0.1.2-windows-amd64.zip
+tar -xzf kbcli-full-v0.2.0-darwin-arm64.tar.gz   # Windows：unzip kbcli-full-v0.2.0-windows-amd64.zip
 ./kbcli
 ```
 
@@ -94,7 +94,7 @@ sha256sum -c checksums.txt --ignore-missing
 使用 `go install` 直接安装已发布的版本：
 
 ```sh
-go install github.com/ProjAnvil/kbcli/cmd/kbcli@v0.1.1
+go install github.com/ProjAnvil/kbcli/cmd/kbcli@v0.2.0
 # 或
 go install github.com/ProjAnvil/kbcli/cmd/kbcli@latest
 ```
@@ -134,7 +134,7 @@ kbcli settings set top_k 9     # 一个稀疏的工作区覆盖
 
 `chat_provider` 选择聊天 API 协议：`openai`（默认，OpenAI 兼容的 Chat Completions）或 `anthropic`（Anthropic Messages API）。`base_url` 必须指向与所选协议兼容的接口。使用 Anthropic 官方 API 时，请将 `base_url` 留空，或设为 `https://api.anthropic.com/v1`——agent 会自动回退到与协议匹配的默认地址（默认的 OpenAI `base_url` 仅适用于 `openai`）。
 
-重排**默认开启**：`rerank_enabled: true`、`rerank_type: aikit`、`rerank_model: ms-marco-MiniLM-L-6-v2`。当 `rerank_model_path` 为空时，模型位于受管目录 `~/.kbcli/model/ms-marco-MiniLM-L-6-v2/`。普通发行版首次运行时，kbcli 会检查该目录；若缺少五个模型文件，会在 TUI 启动前带进度行下载它们（约 92 MB）。下载或复制完成前无法开始聊天。将 `rerank_model_path` 设为已有的本地模型目录即可跳过下载。详见[本地 cross-encoder 重排](#本地-cross-encoder-重排)，以及外部 HTTP 与 LLM 选项。
+重排**默认开启**：`rerank_enabled: true`、`rerank_type: aikit`、`rerank_model: ms-marco-MiniLM-L-6-v2`。当 `rerank_model_path` 为空时，模型位于受管目录 `~/.kbcli/model/ms-marco-MiniLM-L-6-v2/`。普通发行版首次运行时，kbcli 会检查该目录；若缺少五个模型文件，会打开带 ASCII 标志和字节级进度条的启动界面，同时下载它们（约 92 MB）。下载或复制完成前无法开始聊天。将 `rerank_model_path` 设为已有的本地模型目录即可跳过该界面。详见[本地 cross-encoder 重排](#本地-cross-encoder-重排)，以及外部 HTTP 与 LLM 选项。
 
 `intent_mode` 选择路由模式：`off`、`binary`（`direct` 或 `rag`）、`adaptive`（`direct`、`quick_rag`、`deep_rag`）。默认值为 `adaptive`。`direct` 跳过检索，只做简短回答。`quick_rag` 用原问题检索，不做事指消解与查询变换。`deep_rag` 走完整管线。
 
@@ -154,7 +154,7 @@ kbcli 的默认值现在与 LangChain 的 `RecursiveCharacterTextSplitter` 字�
 [`github.com/townsendmerino/aikit`](https://github.com/townsendmerino/aikit)
 v1.78.0 在进程内运行 cross-encoder。它不需要 HTTP 服务、Python、ONNX Runtime 或 cgo；该 API 属于 Experimental，因此 kbcli 固定依赖版本。
 
-**受管模型（默认）。** 当 `rerank_model_path` 为空时，kbcli 使用 `~/.kbcli/model/<rerank_model>`，默认为 `~/.kbcli/model/ms-marco-MiniLM-L-6-v2/`。普通发行版首次运行时，kbcli 会检查该目录下的五个文件；若缺少任意一个，就会带进度行下载（约 92 MB，Hugging Face 修订版 `233902d25c440f23af6f7d6e94d2946bac0bee0a`），且在 TUI 启动前完成。下载或复制完成前无法开始聊天。[完整离线发行档](#预编译二进制)附带同样的五个文件，因此其首次运行只需复制到受管目录——无需网络。
+**受管模型（默认）。** 当 `rerank_model_path` 为空时，kbcli 使用 `~/.kbcli/model/<rerank_model>`，默认为 `~/.kbcli/model/ms-marco-MiniLM-L-6-v2/`。普通发行版首次运行时，kbcli 会检查该目录下的五个文件；若缺少任意一个，就会打开带 ASCII 标志和字节级进度条的启动界面，同时下载（约 92 MB，Hugging Face 修订版 `233902d25c440f23af6f7d6e94d2946bac0bee0a`）。下载或复制完成前无法开始聊天。[完整离线发行档](#预编译二进制)附带同样的五个文件，因此其首次运行只需复制到受管目录——无需网络。
 
 **外部本地模型。** 将 `rerank_model_path` 设为包含 `config.json`、`model.safetensors` 和 tokenizer 文件的目录；kbcli 会将其视为外部管理并跳过下载：
 
@@ -181,6 +181,22 @@ huggingface-cli download cross-encoder/ms-marco-MiniLM-L-6-v2 \
 背景参考：[LangChain text splitters](https://python.langchain.com/docs/concepts/text_splitters/)。
 
 <a id="settings-screen"></a>
+
+### 快捷键与窗口
+
+聊天界面用 `ctrl+x` 作为窗口前缀，参照 Emacs 的 `C-x` 约定。不用 `ctrl+w`、`ctrl+a`、`ctrl+b`，因为这些键已被输入框用于编辑。按下前缀后再按：
+
+| 按键 | 操作 |
+|---|---|
+| `ctrl+x t` | 新建窗口 |
+| `ctrl+x n` / `ctrl+x p` | 下一个 / 上一个窗口 |
+| `ctrl+x 0` … `ctrl+x 8` | 跳到编号窗口 |
+| `ctrl+x x` | 关闭当前窗口 |
+| `ctrl+x w` | 打开窗口选择器 |
+
+帮助行上方有标签栏，高亮当前窗口。`ctrl+x w` 打开浮层选择器。用 `up`/`down` 选择，`enter` 进入，`esc` 取消。
+
+每个窗口各自保存会话、证据与会话记忆。前缀 750 毫秒后超时。前缀后的按键不会进入输入框。`ctrl+c` 仍然退出。
 
 ### 设置界面
 

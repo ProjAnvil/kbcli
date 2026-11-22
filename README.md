@@ -66,7 +66,7 @@ Each GitHub release publishes two tiers of archives per platform. Asset names ca
 Extract an archive and run the binary from the extracted directory (replace the example name with your version and platform):
 
 ```sh
-tar -xzf kbcli-full-v0.1.2-darwin-arm64.tar.gz   # Windows: unzip kbcli-full-v0.1.2-windows-amd64.zip
+tar -xzf kbcli-full-v0.2.0-darwin-arm64.tar.gz   # Windows: unzip kbcli-full-v0.2.0-windows-amd64.zip
 ./kbcli
 ```
 
@@ -94,7 +94,7 @@ sha256sum -c checksums.txt --ignore-missing
 Install a released version directly with `go install`:
 
 ```sh
-go install github.com/ProjAnvil/kbcli/cmd/kbcli@v0.1.1
+go install github.com/ProjAnvil/kbcli/cmd/kbcli@v0.2.0
 # or
 go install github.com/ProjAnvil/kbcli/cmd/kbcli@latest
 ```
@@ -134,7 +134,7 @@ kbcli settings set top_k 9     # one sparse workspace override
 
 `chat_provider` selects the chat API protocol: `openai` (default, OpenAI-compatible Chat Completions) or `anthropic` (Anthropic Messages API). `base_url` must point to an endpoint compatible with the chosen protocol. When using the official Anthropic API, leave `base_url` unset or set it to `https://api.anthropic.com/v1` — the agent automatically falls back to the protocol-appropriate default URL (the default OpenAI `base_url` is only correct for `openai`).
 
-Reranking is **on by default**: `rerank_enabled: true`, `rerank_type: aikit`, and `rerank_model: ms-marco-MiniLM-L-6-v2`. With `rerank_model_path` empty, the model lives in the managed directory `~/.kbcli/model/ms-marco-MiniLM-L-6-v2/`. On the first run of a normal release, kbcli checks that directory; if the five model files are missing it downloads them (~92 MB) with a progress line before the TUI starts. Chat cannot begin until the download or copy completes. Set `rerank_model_path` to an existing local model directory to skip the download. See [Local cross-encoder reranking](#local-cross-encoder-reranking) for details and for the external HTTP and LLM options.
+Reranking is **on by default**: `rerank_enabled: true`, `rerank_type: aikit`, and `rerank_model: ms-marco-MiniLM-L-6-v2`. With `rerank_model_path` empty, the model lives in the managed directory `~/.kbcli/model/ms-marco-MiniLM-L-6-v2/`. On the first run of a normal release, kbcli opens a boot screen with an ASCII logo and a byte-level progress bar while it downloads the five model files (~92 MB). Chat stays blocked until the download or copy finishes. Set `rerank_model_path` to an existing local model directory to skip the boot screen. See [Local cross-encoder reranking](#local-cross-encoder-reranking) for details and for the external HTTP and LLM options.
 
 `intent_mode` selects the router: `off`, `binary` (`direct` or `rag`), or `adaptive` (`direct`, `quick_rag`, `deep_rag`). The default is `adaptive`. A `direct` message skips retrieval and gets one short answer. A `quick_rag` message searches the original question without condense or query transforms. A `deep_rag` message runs the full pipeline.
 
@@ -159,10 +159,10 @@ Experimental, so kbcli pins the dependency version.
 **Managed model (default).** With `rerank_model_path` empty, kbcli uses
 `~/.kbcli/model/<rerank_model>` — by default
 `~/.kbcli/model/ms-marco-MiniLM-L-6-v2/`. On the first run of a normal release,
-kbcli checks for five files there; if any is missing it downloads them (~92 MB,
-Hugging Face revision `233902d25c440f23af6f7d6e94d2946bac0bee0a`) with a
-progress line before the TUI starts. Chat cannot begin until the download or
-copy finishes. A [full offline release](#prebuilt-binaries) ships the same five
+kbcli checks for five files there; if any is missing it opens a boot screen
+with an ASCII wordmark and a byte-level progress bar while it downloads them
+(~92 MB, Hugging Face revision `233902d25c440f23af6f7d6e94d2946bac0bee0a`).
+Chat stays blocked until the download or copy finishes. A [full offline release](#prebuilt-binaries) ships the same five
 files, so its first run only copies them into the managed directory — no network.
 
 **External local model.** Set `rerank_model_path` to a directory containing
@@ -195,6 +195,24 @@ order.
 Both `chunk_size` and `chunk_overlap` are index-affecting: changing either invalidates the `.kbvec` index and requires a reindex (`:reindex` / `kbcli reindex`). Let recall@k guide tuning.
 
 Background: [LangChain text splitters](https://python.langchain.com/docs/concepts/text_splitters/).
+
+<a id="keyboard-shortcuts"></a>
+
+### Keyboard shortcuts and windows
+
+The chat screen uses `ctrl+x` as a window prefix, following the Emacs `C-x` convention. `ctrl+w`, `ctrl+a` and `ctrl+b` are avoided because the text input uses them for editing. Press the prefix, then one of:
+
+| Keys | Action |
+|---|---|
+| `ctrl+x t` | new window |
+| `ctrl+x n` / `ctrl+x p` | next / previous window |
+| `ctrl+x 0` … `ctrl+x 8` | jump to window number |
+| `ctrl+x x` | close the current window |
+| `ctrl+x w` | open the window picker |
+
+A tab bar sits above the help line and highlights the active window. `ctrl+x w` opens a toast-style picker. Press `up`/`down` to choose a window and `enter` to open it. `esc` cancels.
+
+Each window keeps its own transcript, evidence and session memory. The prefix times out after 750 ms. Keys pressed after the prefix never reach the text input. `ctrl+c` still quits.
 
 <a id="settings-screen"></a>
 

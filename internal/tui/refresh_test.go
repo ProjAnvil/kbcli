@@ -35,7 +35,7 @@ func TestCommandResultRebindsAnswerer(t *testing.T) {
 		t.Fatal("command status missing from chat")
 	}
 
-	msg := askCmd(m.opts, m.timeout, nil, "question")()
+	msg := askCmd(m.opts, m.timeout, nil, "question", 0)()
 	if _, ok := msg.(answerMsg); !ok {
 		t.Fatalf("askCmd returned %T, want answerMsg", msg)
 	}
@@ -75,7 +75,7 @@ func TestCommandResultFailureDoesNotRebind(t *testing.T) {
 func TestNoIndexGivesActionableMessage(t *testing.T) {
 	opts := baseOpts()
 	opts.Runner = nil
-	msg := askCmd(opts, 0, nil, "question")()
+	msg := askCmd(opts, 0, nil, "question", 0)()
 	answer, ok := msg.(answerMsg)
 	if !ok {
 		t.Fatalf("askCmd returned %T, want answerMsg", msg)

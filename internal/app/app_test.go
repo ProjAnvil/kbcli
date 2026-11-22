@@ -619,3 +619,36 @@ func TestEnsureRerankModelProvisionsManagedModel(t *testing.T) {
 		t.Fatalf("progress callbacks = %d, want 1", seen)
 	}
 }
+
+func TestNeedsRerankModel(t *testing.T) {
+	disabled := config.Default()
+	disabled.RerankEnabled = false
+	wrongType := config.Default()
+	wrongType.RerankType = config.RerankLLM
+	explicit := config.Default()
+	explicit.RerankModelPath = "/models/custom"
+
+	managed := config.Default()
+	managed.RerankEnabled = true
+	managed.RerankType = config.RerankAikit
+	managed.RerankModelPath = ""
+	managed.RerankModel = "kbcli-test-needs-model-missing-9f3a"
+
+	for _, tc := range []struct {
+		name string
+		app  *App
+		want bool
+	}{
+		{"nil config", &App{}, false},
+		{"disabled", &App{cfg: disabled}, false},
+		{"non-aikit", &App{cfg: wrongType}, false},
+		{"explicit path", &App{cfg: explicit}, false},
+		{"managed missing", &App{cfg: managed}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.app.NeedsRerankModel(); got != tc.want {
+				t.Fatalf("NeedsRerankModel = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

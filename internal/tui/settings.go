@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -63,7 +64,7 @@ func (m *model) openSettings() tea.Cmd {
 // chat input forwarding never run while settings are open.
 func (m *model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// ctrl+c always quits, from any screen.
-	if msg.String() == "ctrl+c" {
+	if key.Matches(msg, quitKey) {
 		return m, tea.Quit
 	}
 
