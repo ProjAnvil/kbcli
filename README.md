@@ -20,21 +20,16 @@ Chat with any local document directory from a single ~26–30 MB Go binary — n
 - **No account required to try it.** The first-run API key wizard is skippable with `ctrl+s`. If the chat backend is unreachable, answers degrade to deterministic extractive evidence with `[n]` citations instead of failing.
 - **No YAML editing.** Every setting lives in the in-TUI `:settings` screen, with sparse per-workspace overrides. Works over SSH, in a tmux pane, and on an offline laptop.
 
-## Also from ProjAnvil
+## ProjAnvil projects used by kbcli
 
-`kbcli` is part of [ProjAnvil — Infrastructure for the Agent Era](https://projanvil.github.io): 14 public, MIT-licensed, Go-first repositories. Each layer does one job and works on its own; `kbcli` is the knowledge layer for your terminal.
+`kbcli` uses two ProjAnvil projects:
 
-| Project | What it does |
+| Project | Role in `kbcli` |
 | --- | --- |
-| [langchain-golang](https://github.com/ProjAnvil/langchain-golang) | A community Go port of LangChain / LangGraph — the agent runtime `kbcli` is built on. |
-| [Porto](https://github.com/ProjAnvil/Porto) | Turns a PRD into grounded engineering specs; `kbcli`'s retrieval pipeline is derived from it. |
-| [Vectra](https://github.com/ProjAnvil/Vectra) | Embedded in-memory graph engine for Go, with optional server mode and MCP interfaces. |
-| [Corpit](https://github.com/ProjAnvil/Corpit) | One Go binary that creates and runs a virtual company of AI agents. |
-| [Knot](https://github.com/ProjAnvil/Knot) | API documentation hub with a built-in MCP server, readable by humans and agents. |
-| [WoCA](https://github.com/ProjAnvil/WoCA) | Single-binary coding agent harness with an explicit, inspectable agent graph. |
-| [MindForge](https://github.com/ProjAnvil/MindForge) · [SCV](https://github.com/ProjAnvil/SCV) · [LadyM](https://github.com/ProjAnvil/LadyM) · [Belt](https://github.com/ProjAnvil/Belt) · [Jiade](https://github.com/ProjAnvil/Jiade) · [Smelt](https://github.com/ProjAnvil/Smelt) · [Bossy](https://github.com/ProjAnvil/Bossy) · [claude-agent-sdk-golang](https://github.com/ProjAnvil/claude-agent-sdk-golang) | Skills, codebase knowledge, agent memory, scaffolding, verification, ChatBI and the Go SDK. |
+| [langchain-golang](https://github.com/ProjAnvil/langchain-golang) | Direct Go dependency: `github.com/projanvil/langchain-golang v0.14.3`. `internal/agent` uses its model adapters, message types, tools, `deepagents`, and `langgraph/prebuilt` to build and run the chat agent. `internal/ingest/markdown.go` uses `core/documents` and `textsplitters` to split Markdown. |
+| [Porto](https://github.com/ProjAnvil/Porto) | Porto is a Python project, not a Go dependency. `kbcli` ports its RAG algorithms into Go. `internal/retrieval` covers BM25, weighted RRF, query transforms, reranking and citations. `internal/intent` holds the intent router. `internal/session` holds per-workspace facts and summary memory. |
 
-[Browse all repositories →](https://github.com/orgs/ProjAnvil/repositories) · [How the stack fits together →](https://projanvil.github.io/#architecture)
+No other ProjAnvil repository is imported at build time or at run time. See `go.mod` for external dependencies.
 
 Schematic of the chat view (not a screenshot):
 

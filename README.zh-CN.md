@@ -20,21 +20,16 @@
 - **试用不需要账号。** 首次运行的 API key 向导可以按 `ctrl+s` 跳过。聊天后端不可达时，答案会退化为带 `[n]` 引用的确定性抽取式证据，而不是报错。
 - **不用改 YAML。** 所有设置都在 TUI 的 `:settings` 里，工作区只保存稀疏覆盖。SSH 里、tmux 窗格里、断网的笔记本上都能用。
 
-## 来自 ProjAnvil 的其他项目
+## 本项目用到的 ProjAnvil 项目
 
-`kbcli` 属于 [ProjAnvil — Infrastructure for the Agent Era](https://projanvil.github.io)：14 个公开、MIT 许可、以 Go 为主的仓库。每一层只做一件事，也能单独使用；`kbcli` 是终端里的知识层。
+`kbcli` 用到了两个 ProjAnvil 项目。
 
-| 项目 | 作用 |
+| 项目 | 用途 |
 | --- | --- |
-| [langchain-golang](https://github.com/ProjAnvil/langchain-golang) | LangChain / LangGraph 的社区 Go 移植，`kbcli` 的 agent runtime 就建立在它之上。 |
-| [Porto](https://github.com/ProjAnvil/Porto) | 把 PRD 转成有依据的工程规格；`kbcli` 的检索管线源自它。 |
-| [Vectra](https://github.com/ProjAnvil/Vectra) | Go 的嵌入式内存图引擎，可选 server 模式与 MCP 接口。 |
-| [Corpit](https://github.com/ProjAnvil/Corpit) | 一个 Go 二进制即可创建并运行由 AI agent 组成的虚拟公司。 |
-| [Knot](https://github.com/ProjAnvil/Knot) | 内置 MCP server 的 API 文档中心，人和 agent 都能读。 |
-| [WoCA](https://github.com/ProjAnvil/WoCA) | 单一二进制的编码 agent harness，agent graph 显式可检查。 |
-| [MindForge](https://github.com/ProjAnvil/MindForge) · [SCV](https://github.com/ProjAnvil/SCV) · [LadyM](https://github.com/ProjAnvil/LadyM) · [Belt](https://github.com/ProjAnvil/Belt) · [Jiade](https://github.com/ProjAnvil/Jiade) · [Smelt](https://github.com/ProjAnvil/Smelt) · [Bossy](https://github.com/ProjAnvil/Bossy) · [claude-agent-sdk-golang](https://github.com/ProjAnvil/claude-agent-sdk-golang) | 技能、代码库知识、agent 记忆、脚手架、验证、ChatBI 与 Go SDK。 |
+| [langchain-golang](https://github.com/ProjAnvil/langchain-golang) | 直接依赖的 Go 模块：`github.com/projanvil/langchain-golang v0.14.3`。`internal/agent` 用它的模型适配层、消息类型和工具接口。`internal/agent` 还用 `deepagents` 与 `langgraph/prebuilt` 运行聊天 agent。`internal/ingest/markdown.go` 用 `core/documents` 和 `textsplitters` 切分 Markdown。 |
+| [Porto](https://github.com/ProjAnvil/Porto) | Porto 是 Python 项目，不是 Go 依赖。`kbcli` 把它的 RAG 算法移植成 Go。`internal/retrieval` 包含 BM25、加权 RRF、查询变换、重排与引用。`internal/intent` 实现意图路由。`internal/session` 实现工作区事实与摘要记忆。 |
 
-[浏览全部仓库 →](https://github.com/orgs/ProjAnvil/repositories) · [了解整套架构 →](https://projanvil.github.io/#architecture)
+构建时和运行时，`kbcli` 都不引入其他 ProjAnvil 仓库。外部依赖见 `go.mod`。
 
 聊天视图示意图（这是示意图，不是截图）：
 
