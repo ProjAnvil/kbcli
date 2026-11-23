@@ -119,8 +119,7 @@ func TestEveryConfigFieldHasBilingualLabel(t *testing.T) {
 
 func TestPromptKeysAndChineseAnaphora(t *testing.T) {
 	for _, key := range []string{
-		"prompt.system_en", "prompt.system_zh", "prompt.question", "prompt.evidence",
-		"prompt.facts", "prompt.summary", "prompt.recent",
+		"prompt.question", "prompt.evidence", "prompt.facts", "prompt.summary", "prompt.recent",
 		"condense.system_en", "condense.system_zh",
 		"facts.system_en", "facts.system_zh",
 		"compact.system_en", "compact.system_zh",

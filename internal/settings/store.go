@@ -150,6 +150,7 @@ func (s *store) Resolve(global *config.Config, root string) (*config.Config, err
 	if err := applyOverrides(cfg, ws.Overrides); err != nil {
 		return nil, fmt.Errorf("settings: resolve workspace %q: %w", key, err)
 	}
+	cfg.ApplyProfile()
 	return cfg, nil
 }
 

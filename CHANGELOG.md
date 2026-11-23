@@ -9,6 +9,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No unreleased changes yet.
 
+## [0.4.0] - 2026-11-24
+
+A minor release that makes multilingual retrieval a first-class supported
+workflow. It adds retrieval profiles with enforced settings, local token-level
+reranking through the existing embedder, automatic KB language detection,
+translation on quick-RAG routes, and a headless `kbcli ask --json` command for
+agent and tool callers. The settings screen now places profile, embedding and
+rerank controls on one page and moves LLM credentials to their own sidebar.
+
+### Added
+
+- **Retrieval profiles.** `profile` accepts `local`, `multilingual` and
+  `custom`. Profiles force a supported embedder/rerank/translation stack and
+  record each forced change with a reason. `custom` is the default and keeps
+  pre-v0.4.0 behaviour.
+- **Local MaxSim reranking.** `rerank_type: local_maxsim` uses token vectors
+  from the active `rembed` model to rescore candidates. No second model, no
+  external rerank service and no token vectors stored in the index.
+- **Headless answers.** `kbcli ask <question>` answers without the TUI.
+  `--json` emits a stable envelope with the answer, hits, profile, intent,
+  detected query language, KB language, translation diagnostics and degraded
+  status. `--explain` sends retrieval diagnostics to stderr.
+- **Stable exit codes.** `0` success, `2` config error, `3` no index, `4` LLM
+  failure and `5` retrieval failure.
+- **Automatic KB language detection.** `kb_language: auto` now uses chunk-level
+  majority voting instead of raw character counts, so identifier-heavy code
+  samples no longer misclassify a Chinese corpus. Chunk metadata keys
+  `language` and `lang` are honoured when present.
+- **Query translation diagnostics.** `CondenseMeta` and `AnswerMeta` expose
+  query language, KB language and translated search query. The TUI and
+  headless JSON both surface them.
+- **Tests.** New coverage for profile enforcement, local MaxSim reranking,
+  quick-RAG translation, corpus language voting and headless command wiring.
+
+### Changed
+
+- **Quick RAG no longer skips translation.** It still skips condensing and
+  query transforms, but cross-language alignment now runs for simple
+  definitional questions.
+- **Reranking uses the translated query.** After translation, candidates are
+  reranked with the same language used for evidence search, avoiding a return
+  to the original query-language bias.
+- **Settings layout.** The first sidebar is now `Profile & Models`. It shows
+  the effective profile summary and policy notes. A separate `LLM` sidebar
+  holds `chat_provider`, `api_key`, `base_url` and `model`.
+- **Bilingual README guidance.** Both READMEs document profile selection,
+  headless usage and warm latency/recall trade-offs between `local` and
+  `multilingual`.
+
+### Fixed
+
+- English queries against Chinese knowledge bases no longer default to an
+  unrelated high-score PDF for definition-style questions. In the measured
+  corpus, Chinese and English variants of "system design" now return the same
+  top five chunks.
+- Mixed-language queries such as `what's 系统设计` are detected as English,
+  translated to the KB language and reranked consistently.
+- Policy-forced settings are re-applied after workspace overrides are merged,
+  so a workspace cannot silently break a selected profile.
+
+### Upgrade notes
+
+- No index invalidation is required for existing indexes. Switching from
+  `local` to `multilingual` changes the embedder and therefore requires
+  `kbcli reindex` once.
+- Existing configurations without `profile` keep `custom` behaviour. Set
+  `profile: multilingual` explicitly to opt into the new enforced stack.
+- `kbcli config keys` now reports 52 fields in 8 groups.
+
 ## [0.3.1] - 2026-11-22
 
 A patch release that corrects the neural embedder's retrieval-domain contract

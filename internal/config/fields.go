@@ -40,22 +40,33 @@ type Field struct {
 }
 
 const (
+	groupModels     = "Profile & Models"
+	groupLLM        = "LLM"
 	groupFoundation = "Foundation"
 	groupIngestion  = "Ingestion"
 	groupRetrieval  = "Retrieval"
-	groupRerank     = "Rerank"
 	groupTransform  = "Query Transform"
 	groupIntent     = "Intent"
 	groupSession    = "Session"
 )
 
 var fieldCatalog = []Field{
-	{Key: "api_key", Label: "API key", Group: groupFoundation, Kind: FieldString, Secret: true, Help: "LLM API key. Never printed in full."},
-	{Key: "base_url", Label: "Base URL", Group: groupFoundation, Kind: FieldString, Help: "Chat Completions or Anthropic Messages endpoint."},
-	{Key: "model", Label: "Chat model", Group: groupFoundation, Kind: FieldString, Help: "Model name sent to the endpoint."},
-	{Key: "chat_provider", Label: "Chat provider", Group: groupFoundation, Kind: FieldEnum, Options: []string{ChatProviderOpenAI, ChatProviderAnthropic}, Help: "Chat API protocol. OpenAI-compatible or Anthropic Messages."},
-	{Key: "embedder", Label: "Embedder", Group: groupFoundation, Kind: FieldEnum, Options: []string{ProviderLocal, ProviderRembed}, IndexAffect: true, Help: "Changing this requires a re-index."},
-	{Key: "embed_model", Label: "Embed model", Group: groupFoundation, Kind: FieldString, IndexAffect: true, Help: "Neural model reference. Changing this requires a re-index."},
+	{Key: "profile", Label: "Profile", Group: groupModels, Kind: FieldEnum, Options: []string{ProfileLocal, ProfileMultilingual, ProfileCustom}, Help: "local: hash + no rerank. multilingual: rembed + local MaxSim. custom: manual."},
+	{Key: "embedder", Label: "Embedder", Group: groupModels, Kind: FieldEnum, Options: []string{ProviderLocal, ProviderRembed}, IndexAffect: true, Help: "Changing this requires a re-index."},
+	{Key: "embed_model", Label: "Embed model", Group: groupModels, Kind: FieldString, IndexAffect: true, Help: "Neural model reference. Changing this requires a re-index."},
+	{Key: "rerank_enabled", Label: "Rerank", Group: groupModels, Kind: FieldBool, Help: "Porto: enable post-retrieval reranking."},
+	{Key: "rerank_type", Label: "Rerank backend", Group: groupModels, Kind: FieldEnum, Options: []string{RerankLocalMaxSim, RerankAikit, RerankCrossEncoder, RerankLLM}, Help: "local_maxsim: same rembed model, token-level, offline. aikit: bundled English cross-encoder."},
+	{Key: "rerank_top_n", Label: "Rerank top N", Group: groupModels, Kind: FieldInt, Min: 1, Max: 50, Step: 1},
+	{Key: "rerank_model", Label: "Rerank model", Group: groupModels, Kind: FieldString, Help: "Model name: HF leaf name or external HTTP model."},
+	{Key: "rerank_model_path", Label: "Rerank model path", Group: groupModels, Kind: FieldString, Help: "Empty uses ~/.kbcli/model/<rerank_model>."},
+	{Key: "rerank_base_url", Label: "Rerank URL", Group: groupModels, Kind: FieldString, Help: "Cross-encoder /rerank endpoint base URL."},
+	{Key: "rerank_api_key", Label: "Rerank key", Group: groupModels, Kind: FieldString, Secret: true},
+
+	{Key: "chat_provider", Label: "Chat provider", Group: groupLLM, Kind: FieldEnum, Options: []string{ChatProviderOpenAI, ChatProviderAnthropic}, Help: "Chat API protocol. OpenAI-compatible or Anthropic Messages."},
+	{Key: "api_key", Label: "API key", Group: groupLLM, Kind: FieldString, Secret: true, Help: "LLM API key. Never printed in full."},
+	{Key: "base_url", Label: "Base URL", Group: groupLLM, Kind: FieldString, Help: "Chat Completions or Anthropic Messages endpoint."},
+	{Key: "model", Label: "Chat model", Group: groupLLM, Kind: FieldString, Help: "Model name sent to the endpoint."},
+
 	{Key: "agent", Label: "Agent", Group: groupFoundation, Kind: FieldEnum, Options: []string{AgentReact, AgentDeep}},
 	{Key: "index_file", Label: "Index file", Group: groupFoundation, Kind: FieldString, Help: "Vector file name inside a workspace."},
 	{Key: "timeout_seconds", Label: "Timeout (s)", Group: groupFoundation, Kind: FieldInt, Min: 1, Max: 600, Step: 10},
@@ -79,14 +90,8 @@ var fieldCatalog = []Field{
 	{Key: "context_char_budget", Label: "Context budget", Group: groupRetrieval, Kind: FieldInt, Min: 1000, Max: 64000, Step: 1000, Help: "Porto: character budget for the assembled prompt."},
 	{Key: "context_max_chunk_chars", Label: "Per-chunk cap", Group: groupRetrieval, Kind: FieldInt, Min: 100, Max: 4000, Step: 100, Help: "Porto: per-citation character cap."},
 
-	{Key: "rerank_enabled", Label: "Rerank", Group: groupRerank, Kind: FieldBool, Help: "Porto: enable post-retrieval reranking."},
-	{Key: "rerank_type", Label: "Rerank backend", Group: groupRerank, Kind: FieldEnum, Options: []string{RerankCrossEncoder, RerankLLM, RerankAikit}, Help: "Default: local aikit cross-encoder."},
-	{Key: "rerank_top_n", Label: "Rerank top N", Group: groupRerank, Kind: FieldInt, Min: 1, Max: 50, Step: 1},
-	{Key: "rerank_base_url", Label: "Rerank URL", Group: groupRerank, Kind: FieldString, Help: "Cross-encoder /rerank endpoint base URL."},
-	{Key: "rerank_model", Label: "Rerank model", Group: groupRerank, Kind: FieldString, Help: "Model name: HF leaf name or external HTTP model."},
-	{Key: "rerank_model_path", Label: "Rerank model path", Group: groupRerank, Kind: FieldString, Help: "Empty uses ~/.kbcli/model/<rerank_model>."},
-	{Key: "rerank_api_key", Label: "Rerank key", Group: groupRerank, Kind: FieldString, Secret: true},
-
+	{Key: "kb_language", Label: "KB language", Group: groupTransform, Kind: FieldEnum, Options: []string{KBLanguageAuto, KBLanguageEn, KBLanguageZh}, Help: "auto detects the corpus language from indexed chunks."},
+	{Key: "query_translation", Label: "Query translation", Group: groupTransform, Kind: FieldEnum, Options: []string{QueryTranslationAuto, QueryTranslationOn, QueryTranslationOff}, Help: "auto translates only when query and KB language differ."},
 	{Key: "query_transform", Label: "Query transform", Group: groupTransform, Kind: FieldEnum, Options: []string{TransformNone, TransformHyDE, TransformMultiQuery, TransformDecomposition, TransformStepBack}, Help: "Porto: HyDE / multi-query / decomposition / step-back. Needs an LLM."},
 	{Key: "multi_query_count", Label: "Query variants", Group: groupTransform, Kind: FieldInt, Min: 2, Max: 8, Step: 1},
 	{Key: "condense_enabled", Label: "Condense query", Group: groupTransform, Kind: FieldBool, Help: "Porto: resolve pronouns and ellipsis from recent history before retrieval."},
@@ -164,6 +169,8 @@ func (c *Config) GetField(key string) (any, error) {
 		return c.EmbedModel, nil
 	case "agent":
 		return c.Agent, nil
+	case "profile":
+		return c.Profile, nil
 	case "index_file":
 		return c.IndexFileName, nil
 	case "timeout_seconds":
@@ -216,6 +223,10 @@ func (c *Config) GetField(key string) (any, error) {
 		return c.RerankModelPath, nil
 	case "rerank_api_key":
 		return c.RerankAPIKey, nil
+	case "kb_language":
+		return c.KBLanguage, nil
+	case "query_translation":
+		return c.QueryTranslation, nil
 	case "query_transform":
 		return c.QueryTransform, nil
 	case "multi_query_count":
@@ -260,43 +271,54 @@ func (c *Config) SetField(key, value string) error {
 	if !ok {
 		return fmt.Errorf("config: unknown key %q", key)
 	}
+	var err error
 	switch f.Kind {
-	case FieldString:
-		return c.setString(key, value)
-	case FieldBool:
-		v, err := parseBool(value)
-		if err != nil {
-			return fmt.Errorf("config: %s %w", key, err)
-		}
-		return c.setBool(key, v)
-	case FieldEnum:
-		for _, opt := range f.Options {
-			if value == opt {
-				return c.setString(key, value)
+	case FieldString, FieldEnum:
+		if f.Kind == FieldEnum {
+			valid := false
+			for _, opt := range f.Options {
+				if value == opt {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				return fmt.Errorf("config: %s must be one of %s, got %q", key, strings.Join(f.Options, ", "), value)
 			}
 		}
-		return fmt.Errorf("config: %s must be one of %s, got %q", key, strings.Join(f.Options, ", "), value)
-	case FieldInt:
-		n, err := strconv.Atoi(strings.TrimSpace(value))
-		if err != nil {
-			return fmt.Errorf("config: %s expects an integer, got %q", key, value)
+		err = c.setString(key, value)
+	case FieldBool:
+		var v bool
+		v, err = parseBool(value)
+		if err == nil {
+			err = c.setBool(key, v)
 		}
-		if float64(n) < f.Min || float64(n) > f.Max {
+	case FieldInt:
+		var n int
+		n, err = strconv.Atoi(strings.TrimSpace(value))
+		if err == nil && (float64(n) < f.Min || float64(n) > f.Max) {
 			return fmt.Errorf("config: %s must be %g..%g, got %d", key, f.Min, f.Max, n)
 		}
-		return c.setInt(key, n)
-	case FieldFloat:
-		v, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-		if err != nil {
-			return fmt.Errorf("config: %s expects a number, got %q", key, value)
+		if err == nil {
+			err = c.setInt(key, n)
 		}
-		if v < f.Min || v > f.Max {
+	case FieldFloat:
+		var v float64
+		v, err = strconv.ParseFloat(strings.TrimSpace(value), 64)
+		if err == nil && (v < f.Min || v > f.Max) {
 			return fmt.Errorf("config: %s must be %g..%g, got %g", key, f.Min, f.Max, v)
 		}
-		return c.setFloat(key, v)
+		if err == nil {
+			err = c.setFloat(key, v)
+		}
 	default:
 		return fmt.Errorf("config: unsupported field kind for %q", key)
 	}
+	if err != nil {
+		return err
+	}
+	c.ApplyProfile()
+	return nil
 }
 
 // ValueString renders a field for display. Secret values are masked.
@@ -362,6 +384,9 @@ func (c *Config) setString(key, value string) error {
 		c.EmbedModel = value
 	case "agent":
 		c.Agent = value
+	case "profile":
+		c.Profile = value
+		c.ApplyProfile()
 	case "index_file":
 		c.IndexFileName = value
 	case "retrieval_method":
@@ -378,6 +403,10 @@ func (c *Config) setString(key, value string) error {
 		c.RerankAPIKey = value
 	case "query_transform":
 		c.QueryTransform = value
+	case "kb_language":
+		c.KBLanguage = value
+	case "query_translation":
+		c.QueryTranslation = value
 	case "chunk_strategy":
 		c.ChunkStrategy = value
 	case "intent_mode":

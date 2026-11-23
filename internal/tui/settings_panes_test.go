@@ -16,8 +16,8 @@ func TestRailToDetailAndBack(t *testing.T) {
 	if m.pane != paneRail {
 		t.Fatalf("settings should open on the rail, got pane=%d", m.pane)
 	}
-	if len(m.groups) != 7 {
-		t.Fatalf("groups = %d, want 7", len(m.groups))
+	if len(m.groups) != 8 {
+		t.Fatalf("groups = %d, want 8", len(m.groups))
 	}
 
 	got, _ := pressKey(m, "down")

@@ -5,6 +5,7 @@ import (
 	"context"
 
 	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/embed"
 	"github.com/ProjAnvil/kbcli/internal/index"
 	"github.com/ProjAnvil/kbcli/internal/session"
 )
@@ -33,16 +34,22 @@ type Answerer interface {
 // status line so users can see whether anaphora resolution and session memory
 // actually ran.
 type AnswerMeta struct {
-	Intent       string
-	IntentReason string
-	IntentEngine string
-	Condensed    bool
-	Original     string
-	Rewritten    string
-	Method       string
-	FactsCount   int
-	SessionTitle string
-	HasSummary   bool
+	Intent        string
+	IntentReason  string
+	IntentEngine  string
+	Condensed     bool
+	Original      string
+	Rewritten     string
+	Method        string
+	SearchQuery   string
+	QueryLang     string
+	KBLang        string
+	Translated    bool
+	TranslateFrom string
+	TranslateTo   string
+	FactsCount    int
+	SessionTitle  string
+	HasSummary    bool
 	// Degraded is true when retrieval, the LLM, or grounding fell back to a
 	// reduced path. Reason is a short machine-facing code shown in the TUI so
 	// a silent degradation never looks like a normal grounded answer.
@@ -88,11 +95,22 @@ func NewSink() Sink {
 
 // New builds the chat model and agent. Implemented in runner.go.
 func New(cfg *config.Config, store index.Store, sink Sink) (Answerer, error) {
-	return newRunner(cfg, store, sink, nil)
+	return newRunner(cfg, store, sink, nil, nil)
+}
+
+// NewWithEmbedder builds a runner with the local embedder available for
+// token-level reranking.
+func NewWithEmbedder(cfg *config.Config, store index.Store, sink Sink, emb embed.Embedder) (Answerer, error) {
+	return newRunner(cfg, store, sink, nil, emb)
 }
 
 // NewWithSession attaches per-workspace session memory. Porto injects the
 // session's facts, summary and recent turns into every round's prompt.
 func NewWithSession(cfg *config.Config, store index.Store, sink Sink, sess *session.Store) (Answerer, error) {
-	return newRunner(cfg, store, sink, sess)
+	return newRunner(cfg, store, sink, sess, nil)
+}
+
+// NewWithSessionAndEmbedder attaches session memory and the local embedder.
+func NewWithSessionAndEmbedder(cfg *config.Config, store index.Store, sink Sink, sess *session.Store, emb embed.Embedder) (Answerer, error) {
+	return newRunner(cfg, store, sink, sess, emb)
 }

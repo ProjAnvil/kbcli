@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ProjAnvil/kbcli/internal/config"
@@ -106,7 +107,9 @@ func TestOptMultiQueryCallsAndFuses(t *testing.T) {
 	cfg := config.Default()
 	cfg.QueryTransform = config.TransformMultiQuery
 	cfg.MultiQueryCount = 3
-	complete := func(_ context.Context, _, _ string) (string, error) {
+	var gotSystem string
+	complete := func(_ context.Context, system, _ string) (string, error) {
+		gotSystem = system
 		return "- retry policy\n- backoff rules\n- request retries\n", nil
 	}
 	var calls []string
@@ -126,6 +129,9 @@ func TestOptMultiQueryCallsAndFuses(t *testing.T) {
 		if calls[i] != want[i] {
 			t.Fatalf("rawSearch calls = %v, want %v", calls, want)
 		}
+	}
+	if !strings.Contains(gotSystem, "cross-language variants") || !strings.Contains(gotSystem, "Chinese translation") {
+		t.Fatalf("multi-query prompt lacks cross-language rule: %q", gotSystem)
 	}
 	if got == nil {
 		t.Fatal("fused hits must not be nil")

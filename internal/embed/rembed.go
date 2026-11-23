@@ -26,6 +26,7 @@ const (
 
 var (
 	_ Embedder      = (*rembedEmbedder)(nil)
+	_ TokenEmbedder = (*rembedEmbedder)(nil)
 	_ TokenCounter  = (*rembedEmbedder)(nil)
 	_ QueryPrefixer = (*rembedEmbedder)(nil)
 )
@@ -121,6 +122,19 @@ func (e *rembedEmbedder) EmbedBatch(texts []string) ([][]float32, error) {
 		return nil, fmt.Errorf("embed: rembed returned %d vectors for %d texts", len(vecs), len(texts))
 	}
 	return vecs, nil
+}
+
+// EmbedTokensWithPrefix exposes raw token vectors for local MaxSim reranking.
+// Prefixes must be applied here: rembed embeds exactly the text it receives.
+func (e *rembedEmbedder) EmbedTokensWithPrefix(ctx context.Context, text, prefix string) (TokenEmbeddings, error) {
+	out, err := e.model.EmbedTokens(ctx, []string{prefix + text})
+	if err != nil {
+		return TokenEmbeddings{}, fmt.Errorf("embed: token batch of 1 text: %w", err)
+	}
+	if len(out) != 1 {
+		return TokenEmbeddings{}, fmt.Errorf("embed: rembed returned %d token results, want 1", len(out))
+	}
+	return TokenEmbeddings{IDs: out[0].IDs, Vectors: out[0].Vectors}, nil
 }
 
 func (e *rembedEmbedder) Close() error { return e.model.Close() }

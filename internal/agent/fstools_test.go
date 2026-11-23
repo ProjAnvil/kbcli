@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ProjAnvil/kbcli/internal/config"
 	coretools "github.com/projanvil/langchain-golang/core/tools"
 )
 
@@ -148,19 +147,5 @@ func TestFSToolsRejectBinaryAndInvalidRoot(t *testing.T) {
 	}
 	if got := fsTools(filepath.Join(root, "does-not-exist")); len(got) != 0 {
 		t.Fatalf("invalid root must yield no tools, got %d", len(got))
-	}
-}
-
-func TestSystemPromptForLanguage(t *testing.T) {
-	en := &config.Config{Language: config.LangEn}
-	zh := &config.Config{Language: config.LangZh}
-	if systemPromptFor(en) != SystemPrompt {
-		t.Fatal("English config must select SystemPrompt")
-	}
-	if systemPromptFor(zh) != SystemPromptZh {
-		t.Fatal("Chinese config must select SystemPromptZh")
-	}
-	if strings.Contains(SystemPrompt, "Answer only from") {
-		t.Fatal("system prompt must not restrict the model to reciting evidence")
 	}
 }

@@ -420,8 +420,20 @@ func (m *model) adjustField(dir int) {
 		return
 	}
 	m.statusErr = nil
-	m.status = m.fieldLabel(f) + " = " + m.draft.ValueString(f.Key)
+	m.status = m.withPolicyStatus(m.fieldLabel(f) + " = " + m.draft.ValueString(f.Key))
 	m.markDirty(f.Key)
+}
+
+func (m *model) withPolicyStatus(base string) string {
+	if m.draft == nil || len(m.draft.PolicyNotes) == 0 {
+		return base
+	}
+	note := m.draft.PolicyNotes[len(m.draft.PolicyNotes)-1]
+	label := note.Field
+	if f, ok := config.FieldByKey(note.Field); ok {
+		label = m.fieldLabel(f)
+	}
+	return base + " · forced " + label + "=" + note.New + ": " + note.Reason
 }
 
 // toggleOrCycle toggles a bool or advances an enum to its next option.
@@ -468,7 +480,7 @@ func (m *model) toggleOrCycle() {
 		return
 	}
 	m.statusErr = nil
-	m.status = m.fieldLabel(f) + " = " + m.draft.ValueString(f.Key)
+	m.status = m.withPolicyStatus(m.fieldLabel(f) + " = " + m.draft.ValueString(f.Key))
 	m.markDirty(f.Key)
 }
 
@@ -631,8 +643,13 @@ func (m *model) settingsView() string {
 	b.WriteString(settingsSubHeaderStyle.Render(m.lang.Tf("settings.mode", m.modeLabel()) + " · " + m.info.FilePath))
 	b.WriteRune('\n')
 
+	notes := m.policyNoteLines()
 	if stale, fields := m.settingsStale(); stale {
 		b.WriteString(settingsStaleStyle.Render(m.lang.Tf("settings.stale", strings.Join(fields, ", "))))
+		b.WriteRune('\n')
+	}
+	for _, note := range notes {
+		b.WriteString(settingsStaleStyle.Render(m.lang.Tf("settings.policy", note)))
 		b.WriteRune('\n')
 	}
 	if m.loading {
@@ -642,9 +659,9 @@ func (m *model) settingsView() string {
 
 	// Reserve rows for the two headers, optional stale/loading lines, the
 	// inline editor, status and help footer.
-	paneHeight := m.height - 8
-	if paneHeight < 6 {
-		paneHeight = 6
+	paneHeight := m.height - 8 - len(notes)
+	if paneHeight < 4 {
+		paneHeight = 4
 	}
 	b.WriteString(m.settingsBody(paneHeight))
 	b.WriteRune('\n')
@@ -670,6 +687,36 @@ func (m *model) settingsView() string {
 	}
 	b.WriteString(settingsHelpStyle.Render(help))
 	return b.String()
+}
+
+func (m *model) policyNoteLines() []string {
+	if m.draft == nil || len(m.draft.PolicyNotes) == 0 {
+		return nil
+	}
+	limit := len(m.draft.PolicyNotes)
+	if limit > 2 {
+		limit = 2
+	}
+	out := make([]string, 0, limit)
+	for _, note := range m.draft.PolicyNotes[:limit] {
+		label := note.Field
+		if f, ok := config.FieldByKey(note.Field); ok {
+			label = m.fieldLabel(f)
+		}
+		line := label + " " + note.Old + "→" + note.New + ": " + note.Reason
+		out = append(out, truncate(line, maxInt(40, m.width-8)))
+	}
+	if len(m.draft.PolicyNotes) > limit {
+		out = append(out, "... "+strconv.Itoa(len(m.draft.PolicyNotes)-limit)+" more")
+	}
+	return out
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (m *model) settingsHelp() string {
@@ -723,12 +770,13 @@ func (m *model) renderRail(h int) string {
 
 func (m *model) renderDetail(h int) string {
 	start, end := m.groupBounds()
-	group := ""
+	rawGroup := ""
 	if len(m.groups) > 0 && m.groupCursor < len(m.groups) {
-		group = m.groups[m.groupCursor]
-		if m.lang == i18n.LangZh {
-			group = m.lang.GroupLabel(group)
-		}
+		rawGroup = m.groups[m.groupCursor]
+	}
+	group := rawGroup
+	if m.lang == i18n.LangZh {
+		group = m.lang.GroupLabel(group)
 	}
 
 	var b strings.Builder
@@ -737,8 +785,19 @@ func (m *model) renderDetail(h int) string {
 		breadcrumb += " · " + m.lang.T("settings.unsaved_mark")
 	}
 	b.WriteString(settingsBreadcrumbStyle.Render(truncate(group+" · "+breadcrumb, m.detailW)))
+	extraRows := 0
+	if rawGroup == "Profile & Models" && m.draft != nil {
+		rerank := "off"
+		if m.draft.RerankEnabled {
+			rerank = m.draft.RerankType
+		}
+		effective := m.lang.Tf("settings.effective", m.draft.Profile, m.draft.Embedder, rerank)
+		b.WriteRune('\n')
+		b.WriteString(settingsStatusStyle.Render(truncate(effective, m.detailW)))
+		extraRows = 1
+	}
 
-	rows := h - 2 // breadcrumb + focused-field help
+	rows := h - 2 - extraRows // breadcrumb + optional summary + focused-field help
 	if rows < 1 {
 		rows = 1
 	}

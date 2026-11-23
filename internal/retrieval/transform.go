@@ -115,7 +115,11 @@ func transformedSearch(
 
 	case config.TransformMultiQuery:
 		system := "Rewrite the question into exactly " + strconv.Itoa(cfg.MultiQueryCount) +
-			" alternative phrasings. Output one per line, no numbering, no explanation."
+			" alternative phrasings for semantic retrieval. Include cross-language variants: " +
+			"if the question is Chinese, include an English translation; if the question is English, " +
+			"include a Chinese translation. Translate natural-language concepts, not identifiers. " +
+			"Preserve proper nouns, file paths, error codes, variable names, and numbers verbatim. " +
+			"Add different synonyms where useful. Output one per line, no numbering, no explanation."
 		out, err := callLLM(ctx, complete, system, q)
 		variants := parseLines(out)
 		if err != nil || len(variants) == 0 {

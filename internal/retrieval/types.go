@@ -7,6 +7,7 @@ import (
 	"context"
 
 	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/embed"
 	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
@@ -19,15 +20,24 @@ type Options struct {
 	Config   *config.Config
 	Store    index.Store
 	Complete CompleteFunc
+	// Embedder is optional. When it supports token embeddings, the local
+	// MaxSim reranker can reuse it instead of loading a second model.
+	Embedder embed.Embedder
 }
 
 // CondenseMeta describes one anaphora-resolution step. Method is "llm",
 // "rule" or empty when no rewrite happened.
 type CondenseMeta struct {
-	Applied   bool
-	Original  string
-	Rewritten string
-	Method    string
+	Applied       bool
+	Original      string
+	Rewritten     string
+	Method        string
+	SearchQuery   string
+	QueryLang     string
+	KBLang        string
+	Translated    bool
+	TranslateFrom string
+	TranslateTo   string
 }
 
 // CondenseReporter is an optional Retriever extension. The agent uses it to

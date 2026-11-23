@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/embed"
 	"github.com/ProjAnvil/kbcli/internal/i18n"
 	"github.com/ProjAnvil/kbcli/internal/index"
 	"github.com/ProjAnvil/kbcli/internal/intent"
@@ -56,6 +57,11 @@ type runner struct {
 	ledger     *citationLedger
 	ledgerOnce sync.Once
 
+	// activeLang is the language chosen by the latest question with a clear
+	// language signal. It stays in force for later ambiguous turns.
+	activeLang i18n.Lang
+	langMu     sync.RWMutex
+
 	metaMu sync.RWMutex
 	meta   AnswerMeta
 }
@@ -84,14 +90,35 @@ func (r *runner) setMeta(m AnswerMeta) {
 	r.metaMu.Unlock()
 }
 
+// answerLanguage returns the language for one turn. The configured UI
+// language is the default. A clear question language switches the conversation
+// and stays in force until another clear switch.
+func (r *runner) answerLanguage(question string, configured i18n.Lang) i18n.Lang {
+	r.langMu.RLock()
+	active := r.activeLang
+	r.langMu.RUnlock()
+	if active == "" {
+		active = configured
+	}
+	detected, ok := detectQuestionLanguage(question)
+	if !ok {
+		return active
+	}
+	r.langMu.Lock()
+	r.activeLang = detected
+	r.langMu.Unlock()
+	return detected
+}
+
 // newRunner builds the model, the optimized retriever, the kb_search tool, and
 // the configured agent. sess may be nil when session memory is disabled.
-func newRunner(cfg *config.Config, store index.Store, sink Sink, sess *session.Store) (Answerer, error) {
+func newRunner(cfg *config.Config, store index.Store, sink Sink, sess *session.Store, emb embed.Embedder) (Answerer, error) {
 	model := buildModel(cfg)
 	ret, err := retrieval.New(retrieval.Options{
 		Config:   cfg,
 		Store:    store,
 		Complete: newComplete(cfg),
+		Embedder: emb,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("agent: build retriever: %w", err)
@@ -110,12 +137,12 @@ func newRunner(cfg *config.Config, store index.Store, sink Sink, sess *session.S
 			tools = append(tools, fsTools(store.Root())...)
 		}
 		ag, err = prebuilt.CreateReactAgent(model, tools,
-			agents.WithAgentSystemPrompt(systemPromptFor(cfg)),
+			agents.WithAgentMiddleware(dedupeToolCallsMiddleware{}),
 			agents.WithAgentRecursionLimit(cfg.MaxIterations))
 	case config.AgentDeep:
 		ag, err = deepagents.CreateDeepAgent(model,
-			deepagents.WithSystemPrompt(systemPromptFor(cfg)),
 			deepagents.WithTools(tool),
+			deepagents.WithMiddleware(dedupeToolCallsMiddleware{}),
 			deepagents.WithBackend(backends.NewStateBackend()))
 	default:
 		return nil, fmt.Errorf("agent: unsupported agent type %q", cfg.Agent)
@@ -136,6 +163,7 @@ func newRunner(cfg *config.Config, store index.Store, sink Sink, sess *session.S
 		ledger:     ledger,
 		classifier: intent.New(cfg, intent.CompleteFunc(complete)),
 		complete:   complete,
+		activeLang: i18n.Parse(cfg.Language),
 	}, nil
 }
 
@@ -299,6 +327,8 @@ func (r *runner) ask(ctx context.Context, history []Turn, question string, answe
 	}
 
 	lang := i18n.Parse(r.cfg.Language)
+	qLang := r.answerLanguage(question, lang)
+	directive := answerDirective(qLang)
 	meta := AnswerMeta{}
 	decision := intent.Decision{Intent: intent.RAG, Engine: intent.EngineOff, Reason: "disabled"}
 	if r.classifier != nil {
@@ -321,7 +351,7 @@ func (r *runner) ask(ctx context.Context, history []Turn, question string, answe
 		hits := []index.Hit{}
 		r.sink.Set(hits)
 		r.setMeta(meta)
-		answer := r.answerDirect(ctx, question, lang)
+		answer := r.answerDirect(ctx, question, qLang)
 		if err := ctx.Err(); err != nil {
 			return "", hits, err
 		}
@@ -351,6 +381,12 @@ func (r *runner) ask(ctx context.Context, history []Turn, question string, answe
 		meta.Original = cm.Original
 		meta.Rewritten = cm.Rewritten
 		meta.Method = cm.Method
+		meta.SearchQuery = cm.SearchQuery
+		meta.QueryLang = cm.QueryLang
+		meta.KBLang = cm.KBLang
+		meta.Translated = cm.Translated
+		meta.TranslateFrom = cm.TranslateFrom
+		meta.TranslateTo = cm.TranslateTo
 	}
 
 	// A cancelled run must not fabricate a fallback answer or write a bogus
@@ -360,7 +396,7 @@ func (r *runner) ask(ctx context.Context, history []Turn, question string, answe
 	}
 
 	if err != nil {
-		answer := fallbackAnswer(hits, fmt.Errorf("agent: retrieve evidence: %w", err), lang)
+		answer := fallbackAnswer(hits, fmt.Errorf("agent: retrieve evidence: %w", err), qLang)
 		meta.Degraded, meta.Reason = true, "retrieval_failed"
 		r.setMeta(meta)
 		r.recordAnswer(answer)
@@ -371,10 +407,10 @@ func (r *runner) ask(ctx context.Context, history []Turn, question string, answe
 	// grounded system prompt already defines the refusal wording.
 	if len(hits) == 0 {
 		key := "answer.no_evidence_en"
-		if lang == i18n.LangZh {
+		if qLang == i18n.LangZh {
 			key = "answer.no_evidence_zh"
 		}
-		answer := lang.T(key)
+		answer := qLang.T(key)
 		meta.Degraded, meta.Reason = true, "no_evidence"
 		r.setMeta(meta)
 		r.recordAnswer(answer)
@@ -384,19 +420,16 @@ func (r *runner) ask(ctx context.Context, history []Turn, question string, answe
 	// facts and summary are injected every round, exactly like Porto's
 	// orchestrator.py prompt_parts. The question is placed before the evidence
 	// so TrimToBudget always preserves it.
-	sys := lang.T("prompt.system_en")
-	if lang == i18n.LangZh {
-		sys = lang.T("prompt.system_zh")
-	}
-	parts := []string{sys, lang.Tf("prompt.question", question)}
+	sys := systemPrompt(qLang, directive)
+	parts := []string{sys, qLang.Tf("prompt.question", question)}
 	if r.sess != nil && r.cfg.SessionEnabled {
 		if block := r.sess.ContextBlock(); block != "" {
-			parts = append(parts, lang.Tf("prompt.facts", block))
+			parts = append(parts, qLang.Tf("prompt.facts", block))
 		}
 	}
 	// Keep every citation as its own part. TrimToBudget then drops whole
 	// trailing snippets instead of cutting a numbered passage in half.
-	parts = append(parts, lang.Tf("prompt.evidence", ""))
+	parts = append(parts, qLang.Tf("prompt.evidence", ""))
 	parts = append(parts, retrieval.FormatCitationParts(hits, numbers, r.cfg.ContextMaxChunkChars)...)
 	parts = retrieval.TrimToBudget(parts, r.cfg.ContextCharBudget)
 
@@ -414,7 +447,7 @@ func (r *runner) ask(ctx context.Context, history []Turn, question string, answe
 	if len(parts) > 1 {
 		msgs = append(msgs, messages.Human(strings.Join(parts[1:], "\n\n")))
 	}
-	base := buildMessagesLang(history, question, sys)
+	base := buildMessagesLang(history, question+"\n\n"+directive, sys)
 	msgs = append(msgs, base[1:]...)
 
 	answer, invokeErr := answerFn(ctx, msgs)
@@ -494,7 +527,7 @@ func (r *runner) recordAnswer(answer string) {
 // buildMessages assembles the system prompt, the last maxHistoryTurns turns,
 // and the current question. Unknown roles are ignored.
 func buildMessages(history []Turn, question string) []messages.Message {
-	return buildMessagesLang(history, question, SystemPrompt)
+	return buildMessagesLang(history, question, systemPrompt(i18n.LangEn, answerDirectiveEn))
 }
 
 func buildMessagesLang(history []Turn, question, sys string) []messages.Message {

@@ -183,8 +183,11 @@ func TestAskInjectsEvidenceBeforeHistory(t *testing.T) {
 		t.Fatalf("history turn not after evidence: %#v", got[2])
 	}
 	last := got[len(got)-1]
-	if last.Role != messages.RoleHuman || last.Content != "what?" {
+	if last.Role != messages.RoleHuman || !strings.HasPrefix(last.Content, "what?\n\n") {
 		t.Fatalf("last message = %#v, want final human question", last)
+	}
+	if last.Content != "what?\n\n"+answerDirectiveEn {
+		t.Fatalf("last message directive = %q, want %q", last.Content, answerDirectiveEn)
 	}
 }
 

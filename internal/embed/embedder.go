@@ -6,6 +6,8 @@
 // Sentia backend so index files stay compatible with its conventions.
 package embed
 
+import "context"
+
 const (
 	// Dim is the fixed vector width of every provider.
 	Dim = 384
@@ -33,6 +35,24 @@ type Embedder interface {
 	EmbedBatch(texts []string) ([][]float32, error)
 	// Close releases model resources. It is a no-op for the local provider.
 	Close() error
+}
+
+// TokenEmbeddings holds one text's token ids and final hidden states.
+// Local rerankers use these for token-level MaxSim scoring.
+type TokenEmbeddings struct {
+	IDs     []int64
+	Vectors [][]float32
+}
+
+// TokenEmbedder is an optional capability for local token-level reranking.
+type TokenEmbedder interface {
+	EmbedTokensWithPrefix(ctx context.Context, text, prefix string) (TokenEmbeddings, error)
+}
+
+// TokenEmbedderOf reports whether e supports token-level reranking.
+func TokenEmbedderOf(e Embedder) (TokenEmbedder, bool) {
+	te, ok := e.(TokenEmbedder)
+	return te, ok
 }
 
 // TokenCounter is an optional capability of an Embedder that can count the

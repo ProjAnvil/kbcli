@@ -567,6 +567,27 @@ func TestSettingsStaleBannerRenders(t *testing.T) {
 	}
 }
 
+func TestSettingsSidebarGroups(t *testing.T) {
+	fields := config.Fields()
+	byKey := make(map[string]config.Field, len(fields))
+	for _, f := range fields {
+		byKey[f.Key] = f
+	}
+	for _, key := range []string{"profile", "embedder", "embed_model", "rerank_type", "rerank_model"} {
+		if byKey[key].Group != "Profile & Models" {
+			t.Fatalf("%s group = %q, want Profile & Models", key, byKey[key].Group)
+		}
+	}
+	for _, key := range []string{"api_key", "base_url", "model", "chat_provider"} {
+		if byKey[key].Group != "LLM" {
+			t.Fatalf("%s group = %q, want LLM", key, byKey[key].Group)
+		}
+	}
+	if fields[0].Key != "profile" {
+		t.Fatalf("first field = %q, want profile", fields[0].Key)
+	}
+}
+
 func TestSettingsViewContainsGroupsAndMode(t *testing.T) {
 	opts, _ := settingsOpts()
 	m := settingsModel(t, opts)
@@ -576,7 +597,7 @@ func TestSettingsViewContainsGroupsAndMode(t *testing.T) {
 	view := m.View()
 	for _, want := range []string{
 		"kbcli settings", "mode:", "Workspace",
-		"Foundation", "Ingestion", "Retrieval", "Rerank", "Query Transform",
+		"Profile & Models", "LLM", "Foundation", "Ingestion", "Retrieval", "Query Transform",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("settings view missing %q", want)

@@ -128,21 +128,47 @@ go install github.com/ProjAnvil/kbcli/cmd/kbcli@latest
 ## 快速开始
 
 ```sh
+kbcli config set profile multilingual
 kbcli index ./docs
 cd ./docs && kbcli
 kbcli search "retry policy" --index ./docs/.kbvec
 kbcli search "retry policy" --json --index ./docs/.kbvec
+kbcli ask "what is the retry policy?" --json --index ./docs/.kbvec
 kbcli eval --samples 50 --index ./docs/.kbvec
 kbcli config set api_key sk-...
 ```
 
 `kbcli eval` 不依赖外部服务。它输出 `recall@1`、`recall@k`、MRR 与 p50/p95 查询延迟。不需要 API key、标注数据或模型下载。请用它在自己的语料上对比检索配置。查询来自块正文，所以召回率偏高。请把数字当作回归信号，不要当作回答质量分数。`kbcli search --json` 输出稳定的 JSON 数组，供工具消费。
 
+`kbcli ask` 是无界面回答命令。加 `--json` 后输出稳定 envelope，包含回答、命中列表、当前 profile、意图路由、查询语言、KB 语言、翻译诊断和降级原因。stdout 只有回答或 JSON；`--explain` 时诊断写到 stderr。退出码：`0` 成功、`2` 配置错误、`3` 无索引、`4` LLM 失败、`5` 检索失败。
+
+### 检索模式
+
+`profile` 选择一组受支持的 embedder、翻译和 reranker 组合。设置界面把它与 embedding、rerank 配置放在同一个 `Profile & Models` 页面，并显示当前生效组合及所有强制修改。
+
+| 模式 | Embedder | 翻译 | 重排 | 适用场景 |
+| --- | --- | --- | --- | --- |
+| `local` | 零权重 hash | auto | off | 最小体积、精确字面量、离线优先的纯中文 KB |
+| `multilingual` | `rembed` / multilingual-e5-small | auto | `local_maxsim` | 混合语言提问、英文 query 查非英文 KB、概念召回 |
+| `custom` | 手动 | 手动 | 手动 | 复现旧配置，或测试不支持的组合 |
+
+模式会强制生效。切到 `local` 会关闭 rerank；切到 `multilingual` 会强制使用 `rembed`、hybrid 检索和 token 级 MaxSim 重排。TUI 会说明每个被强制修改字段的原因。`custom` 是默认值，保留旧行为。
+
+在 4.5 MB 中英混合面试知识库上，用同一类定义问题做热态测试：
+
+| 查询形式 | `local` | `multilingual` |
+| --- | --- | --- |
+| 纯中文（`什么是系统设计`） | ~250 ms，字面召回快 | ~1.6 s，概念召回更稳 |
+| 英文查中文 KB（`what is system design`） | ~1.3 s，目标不稳定 | ~4.8 s，目标稳定 |
+| 混合（`what's 系统设计`） | ~1.6 s，偏字面 | ~3.0 s，目标稳定 |
+
+建议：纯中文、精确标识符为主、在意启动延迟，用 `local`。用户混合语言、用英文查中文或非英文内容、更看重回答稳定性，用 `multilingual`。`multilingual` 冷启动更高，因为神经模型权重只加载一次；后续查询复用缓存。改变 embedder 的 profile 切换需要运行 `kbcli reindex`。
+
 在 TUI 中输入 `:index <dir>` 可为另一个目录建索引（需两步确认）。
 
 启动时不建索引。当前目录存在 `.kbvec` 时，聊天立即开始。否则聊天栏会提示输入 `:index <dir>`，或运行 `kbcli index <dir>`。启动时不做任何扫描，也不向上级目录查找。
 
-CLI 子命令：`index`、`reindex`、`update`、`config`、`settings`、`search`、`eval`、`version`。TUI 内命令：`:reindex`、`:update`、`:settings`、`:stale`、`:clear`、`:help`、`:index`、`:q`（输入行为空时也可按 `q`）。`q` 和 `ctrl+c` 退出；`esc` 用于取消正在生成的回答，不再退出。
+CLI 子命令：`index`、`reindex`、`update`、`config`、`settings`、`search`、`ask`、`eval`、`version`。TUI 内命令：`:reindex`、`:update`、`:settings`、`:stale`、`:clear`、`:help`、`:index`、`:q`（输入行为空时也可按 `q`）。`q` 和 `ctrl+c` 退出；`esc` 用于取消正在生成的回答，不再退出。
 
 回答以流式方式逐字进入聊天栏。从按下 `enter` 到首个 token 出现之间（含意图路由、检索、重排与生成），思考图标会持续转动。这一过程中的任意时刻按 `esc` 即可取消整个请求；被取消的请求不会把助手回复或降级文案写入会话。工具轮的前导文字会从实时文本中清除，只有最终回答那一轮会进入聊天记录。
 
@@ -151,7 +177,7 @@ CLI 子命令：`index`、`reindex`、`update`、`config`、`settings`、`search
 全局设置存放于 `~/.kbcli/config.yaml`（模式 `0600`）。工作区覆盖是稀疏的，存放于 `~/.kbcli/settings.json`：工作区继承 `config.yaml`，只覆盖你设定的键。
 
 ```sh
-kbcli config keys              # 全部 49 个键，含分组、类型与范围
+kbcli config keys              # 全部 52 个键，含分组、类型与范围
 kbcli config list              # 生效值，密钥已遮蔽
 kbcli config get top_k
 kbcli config set top_k 9

@@ -56,6 +56,7 @@ const (
 	RerankCrossEncoder = "cross_encoder"
 	RerankLLM          = "llm"
 	RerankAikit        = "aikit"
+	RerankLocalMaxSim  = "local_maxsim"
 
 	// DefaultRerankModel is the built-in cross-encoder model name used by the
 	// local aikit reranker when no model is configured.
@@ -67,6 +68,14 @@ const (
 	TransformDecomposition = "decomposition"
 	TransformStepBack      = "step_back"
 
+	KBLanguageAuto = "auto"
+	KBLanguageEn   = "en"
+	KBLanguageZh   = "zh"
+
+	QueryTranslationAuto = "auto"
+	QueryTranslationOn   = "on"
+	QueryTranslationOff  = "off"
+
 	// ChunkStrategyAuto selects a structure-aware chunker per file extension.
 	// ChunkStrategyFixed forces the legacy single-size splitter for every
 	// format, reproducing pre-v0.3.0 behaviour.
@@ -77,6 +86,11 @@ const (
 	// chunker registry. Bump it whenever a Strategy's output changes so every
 	// existing .kbvec built with an older chunker is reported stale.
 	ChunkerVersion = "per-ext-v1"
+
+	// Retrieval profiles are supported combinations of embedder and reranker.
+	ProfileLocal        = "local"
+	ProfileMultilingual = "multilingual"
+	ProfileCustom       = "custom"
 )
 
 // Config holds every user-tunable knob. Zero values are replaced by defaults
@@ -127,6 +141,11 @@ type Config struct {
 	ContextCharBudget    int     `yaml:"context_char_budget" json:"context_char_budget"`
 	ContextMaxChunkChars int     `yaml:"context_max_chunk_chars" json:"context_max_chunk_chars"`
 
+	// Retrieval profile selects a supported embedder/reranker combination.
+	// custom keeps manual control. The other profiles force incompatible
+	// switches off and record why in PolicyNotes.
+	Profile string `yaml:"profile" json:"profile"`
+
 	// Rerank settings. Ported from Porto's rerankers.py.
 	RerankEnabled   bool   `yaml:"rerank_enabled" json:"rerank_enabled"`
 	RerankType      string `yaml:"rerank_type" json:"rerank_type"`
@@ -137,9 +156,11 @@ type Config struct {
 	RerankModelPath string `yaml:"rerank_model_path" json:"rerank_model_path"`
 
 	// Query transform settings. Ported from Porto's query_transform.py.
-	QueryTransform  string `yaml:"query_transform" json:"query_transform"`
-	MultiQueryCount int    `yaml:"multi_query_count" json:"multi_query_count"`
-	CondenseEnabled bool   `yaml:"condense_enabled" json:"condense_enabled"`
+	KBLanguage       string `yaml:"kb_language" json:"kb_language"`
+	QueryTranslation string `yaml:"query_translation" json:"query_translation"`
+	QueryTransform   string `yaml:"query_transform" json:"query_transform"`
+	MultiQueryCount  int    `yaml:"multi_query_count" json:"multi_query_count"`
+	CondenseEnabled  bool   `yaml:"condense_enabled" json:"condense_enabled"`
 
 	// Intent routing settings. Ported from Porto's intent.py and enums.py.
 	// Empty intent_api_key, intent_base_url and intent_model inherit the
@@ -160,6 +181,17 @@ type Config struct {
 	FactsRecentContextTurns  int     `yaml:"facts_recent_context_turns" json:"facts_recent_context_turns"`
 	CompactAfterTurns        int     `yaml:"compact_after_turns" json:"compact_after_turns"`
 	SessionMemoryTopK        int     `yaml:"session_memory_top_k" json:"session_memory_top_k"`
+
+	// PolicyNotes is derived by ApplyProfile. It is not persisted.
+	PolicyNotes []PolicyNote `yaml:"-" json:"-"`
+}
+
+// PolicyNote records one forced setting change and its reason.
+type PolicyNote struct {
+	Field  string `json:"field"`
+	Old    string `json:"old"`
+	New    string `json:"new"`
+	Reason string `json:"reason"`
 }
 
 // Default returns the out-of-the-box configuration.
@@ -178,6 +210,7 @@ func Default() *Config {
 		Model:                    "gpt-4o-mini",
 		Embedder:                 ProviderLocal,
 		Agent:                    AgentReact,
+		Profile:                  ProfileCustom,
 		IndexFileName:            DefaultIndexFileName,
 		TimeoutSeconds:           120,
 		MaxIterations:            50,
@@ -202,6 +235,8 @@ func Default() *Config {
 		RerankType:               RerankAikit,
 		RerankModel:              DefaultRerankModel,
 		RerankTopN:               5,
+		KBLanguage:               KBLanguageAuto,
+		QueryTranslation:         QueryTranslationAuto,
 		QueryTransform:           TransformNone,
 		MultiQueryCount:          4,
 		CondenseEnabled:          true,
@@ -225,7 +260,81 @@ func (c *Config) Clone() *Config {
 		return Default()
 	}
 	out := *c
+	out.PolicyNotes = append([]PolicyNote(nil), c.PolicyNotes...)
 	return &out
+}
+
+// ApplyProfile enforces the selected retrieval profile. It records every
+// forced change so the TUI can show why a switch was disabled. It is idempotent.
+func (c *Config) ApplyProfile() []PolicyNote {
+	c.PolicyNotes = nil
+	if c.Profile == "" {
+		c.Profile = ProfileLocal
+	}
+	switch c.Profile {
+	case ProfileLocal:
+		c.force("embedder", c.Embedder, ProviderLocal,
+			"local profile uses the dependency-free hash embedder")
+		c.Embedder = ProviderLocal
+		c.force("rerank_enabled", boolValue(c.RerankEnabled), "off",
+			"local profile has no multilingual semantic reranker")
+		c.RerankEnabled = false
+		c.force("query_translation", c.QueryTranslation, QueryTranslationAuto,
+			"local profile uses query translation for lexical cross-language recall")
+		c.QueryTranslation = QueryTranslationAuto
+	case ProfileMultilingual:
+		c.force("embedder", c.Embedder, ProviderRembed,
+			"multilingual profile needs in-process multilingual embeddings")
+		c.Embedder = ProviderRembed
+		c.force("rerank_type", c.RerankType, RerankLocalMaxSim,
+			"multilingual profile reranks with the same tokenizer-level model")
+		c.RerankType = RerankLocalMaxSim
+		c.force("rerank_enabled", boolValue(c.RerankEnabled), "on",
+			"multilingual profile keeps local token-level reranking")
+		c.RerankEnabled = true
+		c.force("query_translation", c.QueryTranslation, QueryTranslationAuto,
+			"multilingual profile translates queries for the lexical lane")
+		c.QueryTranslation = QueryTranslationAuto
+		c.force("retrieval_method", c.RetrievalMethod, RetrievalHybrid,
+			"multilingual profile needs dense recall plus literal BM25")
+		c.RetrievalMethod = RetrievalHybrid
+		if c.CandidateK < 50 {
+			c.force("candidate_k", strconv.Itoa(c.CandidateK), "50",
+				"token-level reranking needs a wider candidate pool")
+			c.CandidateK = 50
+		}
+		if c.BM25TopK < 50 {
+			c.force("bm25_top_k", strconv.Itoa(c.BM25TopK), "50",
+				"multilingual profile needs a wider lexical pool")
+			c.BM25TopK = 50
+		}
+	case ProfileCustom:
+		if c.Embedder == ProviderLocal && c.RerankEnabled && c.RerankType == RerankAikit {
+			c.PolicyNotes = append(c.PolicyNotes, PolicyNote{
+				Field:  "rerank_type",
+				Old:    c.RerankType,
+				New:    c.RerankType,
+				Reason: "custom profile keeps this combination; the bundled reranker is English-only",
+			})
+		}
+	}
+	return c.PolicyNotes
+}
+
+func (c *Config) force(field, old, next, reason string) {
+	if old == next {
+		return
+	}
+	c.PolicyNotes = append(c.PolicyNotes, PolicyNote{
+		Field: field, Old: old, New: next, Reason: reason,
+	})
+}
+
+func boolValue(v bool) string {
+	if v {
+		return "on"
+	}
+	return "off"
 }
 
 // IndexSignature is the Porto SPLITTER_VERSION equivalent: a stable, readable
@@ -386,6 +495,7 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: parse %s: %w", path, err)
 	}
 	c.applyDefaults()
+	c.ApplyProfile()
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -441,10 +551,25 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("config: unsupported retrieval_method %q (want vector, bm25 or hybrid)", c.RetrievalMethod)
 	}
-	switch c.RerankType {
-	case RerankCrossEncoder, RerankLLM, RerankAikit:
+	switch c.Profile {
+	case ProfileLocal, ProfileMultilingual, ProfileCustom:
 	default:
-		return fmt.Errorf("config: unsupported rerank_type %q (want cross_encoder, llm or aikit)", c.RerankType)
+		return fmt.Errorf("config: unsupported profile %q (want local, multilingual or custom)", c.Profile)
+	}
+	switch c.RerankType {
+	case RerankCrossEncoder, RerankLLM, RerankAikit, RerankLocalMaxSim:
+	default:
+		return fmt.Errorf("config: unsupported rerank_type %q (want cross_encoder, llm, aikit or local_maxsim)", c.RerankType)
+	}
+	switch c.KBLanguage {
+	case KBLanguageAuto, KBLanguageEn, KBLanguageZh:
+	default:
+		return fmt.Errorf("config: unsupported kb_language %q (want auto, en or zh)", c.KBLanguage)
+	}
+	switch c.QueryTranslation {
+	case QueryTranslationAuto, QueryTranslationOn, QueryTranslationOff:
+	default:
+		return fmt.Errorf("config: unsupported query_translation %q (want auto, on or off)", c.QueryTranslation)
 	}
 	switch c.QueryTransform {
 	case TransformNone, TransformHyDE, TransformMultiQuery, TransformDecomposition, TransformStepBack:
@@ -601,13 +726,23 @@ func (c *Config) Normalize() {
 	if c.QueryTransform == "" {
 		c.QueryTransform = d.QueryTransform
 	}
+	if c.KBLanguage == "" {
+		c.KBLanguage = d.KBLanguage
+	}
+	if c.QueryTranslation == "" {
+		c.QueryTranslation = d.QueryTranslation
+	}
 	if c.IntentMode == "" {
 		c.IntentMode = d.IntentMode
 	}
 	if c.IntentProvider == "" {
 		c.IntentProvider = d.IntentProvider
 	}
+	if c.Profile == "" {
+		c.Profile = d.Profile
+	}
 	c.applyDefaults()
+	c.ApplyProfile()
 }
 
 func (c *Config) applyDefaults() {
@@ -657,6 +792,12 @@ func (c *Config) applyDefaults() {
 	if c.TimeoutSeconds <= 0 {
 		c.TimeoutSeconds = d.TimeoutSeconds
 	}
+	if c.KBLanguage == "" {
+		c.KBLanguage = d.KBLanguage
+	}
+	if c.QueryTranslation == "" {
+		c.QueryTranslation = d.QueryTranslation
+	}
 	if c.Language == "" {
 		c.Language = d.Language
 	}
@@ -674,5 +815,8 @@ func (c *Config) applyDefaults() {
 	}
 	if c.IntentProvider == "" {
 		c.IntentProvider = d.IntentProvider
+	}
+	if c.Profile == "" {
+		c.Profile = d.Profile
 	}
 }

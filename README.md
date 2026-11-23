@@ -128,10 +128,12 @@ The module path uses the organisation casing `ProjAnvil`. Go module paths are ca
 ## Quickstart
 
 ```sh
+kbcli config set profile multilingual
 kbcli index ./docs
 cd ./docs && kbcli
 kbcli search "retry policy" --index ./docs/.kbvec
 kbcli search "retry policy" --json --index ./docs/.kbvec
+kbcli ask "what is the retry policy?" --json --index ./docs/.kbvec
 kbcli eval --samples 50 --index ./docs/.kbvec
 kbcli config set api_key sk-...
 ```
@@ -144,11 +146,35 @@ bodies, so treat the numbers as a regression signal, not an answer-quality
 score. `kbcli search --json` prints the same ranked hits as a stable JSON
 array for tool consumers.
 
+`kbcli ask` is the headless answer command. Use `--json` for a stable envelope containing the answer, ranked hits, active profile, intent route, detected query language, detected KB language, translation diagnostics and degradation reason. stdout carries only the answer or JSON; diagnostics go to stderr with `--explain`. Exit codes are `0` success, `2` config error, `3` no index, `4` LLM failure and `5` retrieval failure.
+
+### Retrieval profiles
+
+`profile` selects a supported combination of embedder, translation and reranker. The settings screen groups it with the embedding and rerank knobs under `Profile & Models`, and shows the effective stack plus every forced change.
+
+| Profile | Embedder | Translation | Rerank | Use when |
+| --- | --- | --- | --- | --- |
+| `local` | zero-weight hashing | auto | off | smallest footprint, exact terms, offline-first Chinese-only corpora |
+| `multilingual` | `rembed` / multilingual-e5-small | auto | `local_maxsim` | mixed-language questions, English queries against non-English corpora, conceptual recall |
+| `custom` | manual | manual | manual | reproducing an older setup or testing unsupported combinations |
+
+Profiles are enforced. Switching to `local` disables reranking; switching to `multilingual` forces `rembed`, hybrid retrieval and token-level MaxSim reranking. Each forced change is reported with a reason in the TUI. `custom` is the default and preserves pre-profile behaviour.
+
+A warm benchmark on a 4.5 MB mixed Chinese/English interview corpus, using the same definition-style query family, showed:
+
+| Query form | `local` | `multilingual` |
+| --- | --- | --- |
+| Pure Chinese (`什么是系统设计`) | ~250 ms, fast literal recall | ~1.6 s, stronger conceptual recall |
+| Pure English against Chinese KB (`what is system design`) | ~1.3 s, unstable target | ~4.8 s, stable target |
+| Mixed (`what's 系统设计`) | ~1.6 s, literal-heavy | ~3.0 s, stable target |
+
+Guidance: choose `local` for pure-Chinese corpora where exact identifiers dominate and startup latency matters. Choose `multilingual` for mixed-language users, English queries against Chinese/non-English content, or when answer stability matters more than warm-query latency. Cold start is higher with `multilingual` because the neural weights load once; later queries reuse the cached model. Changing profiles that change `embedder` requires `kbcli reindex`.
+
 Inside the TUI, type `:index <dir>` to index a different directory (two-step confirmation).
 
 Startup never indexes. If `.kbvec` exists in the current directory, chat starts immediately; otherwise the chat pane shows a hint to type `:index <dir>` or run `kbcli index <dir>`. No scan and no parent-directory walk happen at startup.
 
-CLI subcommands: `index`, `reindex`, `update`, `config`, `settings`, `search`, `eval`, `version`. In-TUI commands: `:reindex`, `:update`, `:settings`, `:stale`, `:clear`, `:help`, `:index`, `:q` (also `q` on an empty input line). `q` and `ctrl+c` quit; `esc` cancels an in-flight answer instead of quitting.
+CLI subcommands: `index`, `reindex`, `update`, `config`, `settings`, `search`, `ask`, `eval`, `version`. In-TUI commands: `:reindex`, `:update`, `:settings`, `:stale`, `:clear`, `:help`, `:index`, `:q` (also `q` on an empty input line). `q` and `ctrl+c` quit; `esc` cancels an in-flight answer instead of quitting.
 
 Answers stream into the chat pane as the model produces them. The thinking indicator spins from the moment `enter` is pressed until the first answer token arrives — covering intent routing, retrieval, reranking and generation. Press `esc` at any point during that window to cancel the whole request; a cancelled run writes no assistant turn and no fallback answer into the session. Tool-call preambles are discarded from the live transcript, so only the final answer round reaches the chat.
 
@@ -157,7 +183,7 @@ Answers stream into the chat pane as the model produces them. The thinking indic
 Global settings live in `~/.kbcli/config.yaml` (mode `0600`). Per-workspace overrides are sparse and live in `~/.kbcli/settings.json`: a workspace inherits `config.yaml` and overrides only the keys you set.
 
 ```sh
-kbcli config keys              # all 49 keys with group, type and range
+kbcli config keys              # all 52 keys with group, type and range
 kbcli config list              # effective values, secrets masked
 kbcli config get top_k
 kbcli config set top_k 9

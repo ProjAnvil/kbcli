@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/embed"
 	"github.com/ProjAnvil/kbcli/internal/index"
 	"github.com/townsendmerino/aikit/encoder"
 )
@@ -40,6 +41,17 @@ func rerankHits(
 	cfg *config.Config,
 	complete CompleteFunc,
 ) ([]index.Hit, error) {
+	return rerankHitsWithEmbedder(ctx, query, hits, cfg, complete, nil)
+}
+
+func rerankHitsWithEmbedder(
+	ctx context.Context,
+	query string,
+	hits []index.Hit,
+	cfg *config.Config,
+	complete CompleteFunc,
+	emb embed.Embedder,
+) ([]index.Hit, error) {
 	if cfg == nil || !cfg.RerankEnabled || len(hits) == 0 {
 		return hits, nil
 	}
@@ -51,6 +63,8 @@ func rerankHits(
 		out, err = llmRerank(ctx, query, hits, complete)
 	case config.RerankAikit:
 		out, err = aikitRerank(ctx, query, hits, cfg)
+	case config.RerankLocalMaxSim:
+		out, err = localMaxSimRerank(ctx, query, hits, cfg, emb)
 	default:
 		out, err = crossEncoderRerank(ctx, query, hits, cfg)
 	}
@@ -66,6 +80,10 @@ func rerankHits(
 	case config.RerankAikit:
 		for i := range out {
 			out[i].Score = sigmoid(out[i].Score)
+		}
+	case config.RerankLocalMaxSim:
+		for i := range out {
+			out[i].Score = clamp01(out[i].Score)
 		}
 	case config.RerankCrossEncoder:
 		for i := range out {
@@ -154,6 +172,105 @@ func aikitRerank(ctx context.Context, query string, hits []index.Hit, cfg *confi
 		out[i].Score = float64(scores[i])
 	}
 	return out, nil
+}
+
+// localMaxSimRerank reuses a token-capable local embedder. It scores each
+// query token against every document token and averages the best match.
+// No second model is loaded and no token vectors are written to the index.
+func localMaxSimRerank(
+	ctx context.Context,
+	query string,
+	hits []index.Hit,
+	cfg *config.Config,
+	emb embed.Embedder,
+) ([]index.Hit, error) {
+	if emb == nil {
+		return nil, fmt.Errorf("retrieval: local_maxsim needs a token embedder")
+	}
+	te, ok := embed.TokenEmbedderOf(emb)
+	if !ok {
+		return nil, fmt.Errorf("retrieval: embedder %q has no token vector capability", cfg.Embedder)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	qTokens, err := te.EmbedTokensWithPrefix(ctx, query, "query: ")
+	if err != nil {
+		return nil, fmt.Errorf("retrieval: maxsim query tokens: %w", err)
+	}
+	qVecs := normalizedTokenVectors(qTokens)
+	if len(qVecs) == 0 {
+		return nil, fmt.Errorf("retrieval: maxsim query has no content tokens")
+	}
+	out := make([]index.Hit, len(hits))
+	copy(out, hits)
+	for i, h := range out {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		text := h.Chunk.Body
+		if text == "" {
+			text = h.Chunk.Text
+		}
+		dTokens, err := te.EmbedTokensWithPrefix(ctx, truncateRunes(text, 2000), "passage: ")
+		if err != nil {
+			return nil, fmt.Errorf("retrieval: maxsim document tokens: %w", err)
+		}
+		dVecs := normalizedTokenVectors(dTokens)
+		if len(dVecs) == 0 {
+			out[i].Score = 0
+			continue
+		}
+		total := 0.0
+		for _, q := range qVecs {
+			best := -1.0
+			for _, d := range dVecs {
+				if score := dotF32(q, d); score > best {
+					best = score
+				}
+			}
+			total += best
+		}
+		cosine := total / float64(len(qVecs))
+		out[i].Score = (cosine + 1) / 2
+	}
+	return out, nil
+}
+
+// normalizedTokenVectors drops XLM-R/e5 special ids and L2-normalizes rows.
+func normalizedTokenVectors(tokens embed.TokenEmbeddings) [][]float32 {
+	out := make([][]float32, 0, len(tokens.Vectors))
+	for i, v := range tokens.Vectors {
+		if i < len(tokens.IDs) && tokens.IDs[i] <= 2 {
+			continue
+		}
+		var sum float32
+		for _, x := range v {
+			sum += x * x
+		}
+		if sum <= 0 {
+			continue
+		}
+		norm := 1 / float32(math.Sqrt(float64(sum)))
+		row := make([]float32, len(v))
+		for j, x := range v {
+			row[j] = x * norm
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+func dotF32(a, b []float32) float64 {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	var sum float64
+	for i := 0; i < n; i++ {
+		sum += float64(a[i] * b[i])
+	}
+	return sum
 }
 
 // crossEncoderRerank posts to an OpenAI-compatible /rerank endpoint. Expected

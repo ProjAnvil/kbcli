@@ -739,6 +739,9 @@ func (m *model) onAnswer(msg answerMsg) {
 		m.appendChat(m.lang.Tf("chat.intent",
 			msg.meta.Intent+"/"+msg.meta.IntentEngine, msg.meta.IntentReason), lineStatus)
 	}
+	if msg.meta.Translated {
+		m.appendChat(m.lang.Tf("chat.translated", msg.meta.TranslateFrom, msg.meta.TranslateTo, msg.meta.SearchQuery), lineStatus)
+	}
 	if msg.meta.Condensed {
 		m.appendChat(m.lang.Tf("chat.condensed", msg.meta.Method, msg.meta.Original, msg.meta.Rewritten), lineStatus)
 	}
@@ -1118,10 +1121,31 @@ func (m *model) chatHeader() string {
 	if ver == "" {
 		ver = "dev"
 	}
-	if title := m.windowTitle(); title != "" && len(m.windowTitles) > 1 {
-		return m.lang.Tf("window.header", root, ver, title)
+	summary := m.profileSummary()
+	header := m.lang.Tf("app.header", root, ver)
+	if summary != "" {
+		header += " · " + summary
 	}
-	return m.lang.Tf("app.header", root, ver)
+	if title := m.windowTitle(); title != "" && len(m.windowTitles) > 1 {
+		out := m.lang.Tf("window.header", root, ver, title)
+		if summary != "" {
+			out += " · " + summary
+		}
+		return out
+	}
+	return header
+}
+
+func (m *model) profileSummary() string {
+	cfg := m.opts.Config
+	if cfg == nil {
+		return ""
+	}
+	rerank := "off"
+	if cfg.RerankEnabled {
+		rerank = cfg.RerankType
+	}
+	return m.lang.Tf("app.profile", cfg.Profile, cfg.Embedder, rerank)
 }
 
 func (m *model) evidenceHeader() string {

@@ -120,7 +120,7 @@ func OpenFresh(cfg *config.Config, root string) (*App, error) {
 // own turns and facts. Failures fall back to a runner without session memory.
 func (a *App) NewWindow(id int) (agent.Answerer, agent.Sink) {
 	a.mu.RLock()
-	store, cfg, root, base := a.store, a.cfg, a.root, a.runner
+	store, cfg, root, base, emb := a.store, a.cfg, a.root, a.runner, a.emb
 	a.mu.RUnlock()
 	// No index means there is no runner to clone. Stay silent: writing to
 	// stderr here leaks into the alt-screen TUI and corrupts a rendered row.
@@ -129,9 +129,9 @@ func (a *App) NewWindow(id int) (agent.Answerer, agent.Sink) {
 	}
 	sink := agent.NewSink()
 	sess := openSessionKeyed(cfg, root, fmt.Sprintf("window-%d", id))
-	runner, err := agent.NewWithSession(cfg, store, sink, sess)
+	runner, err := agent.NewWithSessionAndEmbedder(cfg, store, sink, sess, emb)
 	if err != nil {
-		runner, err = agent.New(cfg, store, sink)
+		runner, err = agent.NewWithEmbedder(cfg, store, sink, emb)
 		if err != nil {
 			return base, nil
 		}
@@ -343,6 +343,18 @@ func (a *App) IndexPath() string {
 // Config returns the active settings.
 func (a *App) Config() *config.Config {
 	return a.cfg
+}
+
+// LastMeta returns diagnostics from the most recent Ask call. Headless
+// consumers need these signals to tell a clean answer from a degraded route.
+func (a *App) LastMeta() agent.AnswerMeta {
+	a.mu.RLock()
+	runner := a.runner
+	a.mu.RUnlock()
+	if m, ok := runner.(agent.MetaAnswerer); ok {
+		return m.LastMeta()
+	}
+	return agent.AnswerMeta{}
 }
 
 // Progress phase values. LoadingModel is emitted before the embedder is
@@ -1002,7 +1014,7 @@ func (a *App) ensureEmbedder() (embed.Embedder, error) {
 }
 
 func (a *App) install(root, indexPath string, emb embed.Embedder, store index.Store) error {
-	runner, err := agent.NewWithSession(a.cfg, store, a.sink, a.sess)
+	runner, err := agent.NewWithSessionAndEmbedder(a.cfg, store, a.sink, a.sess, emb)
 	if err != nil {
 		return fmt.Errorf("app: create agent: %w", err)
 	}
@@ -1010,6 +1022,7 @@ func (a *App) install(root, indexPath string, emb embed.Embedder, store index.St
 		Config:   a.cfg,
 		Store:    store,
 		Complete: agent.NewCompletion(a.cfg),
+		Embedder: emb,
 	})
 	if err != nil {
 		return fmt.Errorf("app: create retriever: %w", err)

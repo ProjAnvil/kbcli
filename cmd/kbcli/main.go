@@ -34,10 +34,10 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "kbcli:", err)
-		os.Exit(1)
+		os.Exit(2)
 	}
 	if err := cli.NewRootCmd(cfg, effectiveVersion()).Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "kbcli:", err)
-		os.Exit(1)
+		os.Exit(cli.ExitCode(err))
 	}
 }

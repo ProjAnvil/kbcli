@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/ProjAnvil/kbcli/internal/config"
+	"github.com/ProjAnvil/kbcli/internal/embed"
 	"github.com/ProjAnvil/kbcli/internal/index"
 )
 
@@ -14,11 +15,16 @@ type retriever struct {
 	cfg      *config.Config
 	store    index.Store
 	complete CompleteFunc
+	embedder embed.Embedder
 
 	mu     sync.Mutex
 	idx    *bm25Index
 	metaMu sync.RWMutex
 	meta   CondenseMeta
+
+	langMu  sync.RWMutex
+	langRev uint64
+	lang    string
 }
 
 // LastCondense reports the anaphora-resolution result of the last search.
@@ -37,7 +43,7 @@ func newRetriever(opts Options) (Retriever, error) {
 	}
 	cfg := opts.Config.Clone()
 	cfg.Normalize()
-	return &retriever{cfg: cfg, store: opts.Store, complete: opts.Complete}, nil
+	return &retriever{cfg: cfg, store: opts.Store, complete: opts.Complete, embedder: opts.Embedder}, nil
 }
 
 // ensureBM25 rebuilds the sparse index when the vector store revision changes.
@@ -50,6 +56,29 @@ func (r *retriever) ensureBM25() *bm25Index {
 	}
 	r.idx = newBM25Index(r.store.Chunks(), r.cfg.BM25K1, r.cfg.BM25B, rev)
 	return r.idx
+}
+
+func (r *retriever) corpusLanguage() string {
+	if r.store == nil {
+		return ""
+	}
+	if r.cfg.KBLanguage != config.KBLanguageAuto {
+		return r.cfg.KBLanguage
+	}
+	rev := r.store.Revision()
+	r.langMu.RLock()
+	if r.langRev == rev {
+		lang := r.lang
+		r.langMu.RUnlock()
+		return lang
+	}
+	r.langMu.RUnlock()
+
+	lang := corpusLanguage(r.store.Chunks())
+	r.langMu.Lock()
+	r.langRev, r.lang = rev, lang
+	r.langMu.Unlock()
+	return lang
 }
 
 func (r *retriever) Search(ctx context.Context, query string, k int) ([]index.Hit, error) {
@@ -123,12 +152,39 @@ func (r *retriever) search(ctx context.Context, query string, k int, history []T
 		r.metaMu.Unlock()
 	}
 
+	searchQ := q
+	translatedFrom := ""
+	translatedTo := ""
+	// quick_rag skips condense and query transforms, but query translation is
+	// language alignment, not expansion. It must still run in multilingual
+	// profiles or simple definitional questions silently fail across languages.
+	if r.cfg.QueryTranslation != config.QueryTranslationOff {
+		from := textLanguage(q)
+		to := r.corpusLanguage()
+		r.metaMu.Lock()
+		r.meta.QueryLang, r.meta.KBLang = from, to
+		r.metaMu.Unlock()
+		if from != "" && to != "" && from != to &&
+			(r.cfg.QueryTranslation == config.QueryTranslationOn || r.cfg.QueryTranslation == config.QueryTranslationAuto) {
+			if translated, terr := translateQuery(ctx, q, from, to, r.complete); terr == nil && translated != "" {
+				searchQ = translated
+				translatedFrom, translatedTo = from, to
+				r.metaMu.Lock()
+				r.meta.SearchQuery = translated
+				r.meta.Translated = true
+				r.meta.TranslateFrom = translatedFrom
+				r.meta.TranslateTo = translatedTo
+				r.metaMu.Unlock()
+			}
+		}
+	}
+
 	transformCfg := r.cfg.Clone()
 	transformCfg.CondenseEnabled = false
 	if quick {
 		transformCfg.QueryTransform = config.TransformNone
 	}
-	hits, err := transformedSearch(ctx, q, history, transformCfg, r.complete, rawSearch)
+	hits, err := transformedSearch(ctx, searchQ, history, transformCfg, r.complete, rawSearch)
 	if err != nil || hits == nil {
 		// On a hard failure search the verbatim question, not the condensed
 		// rewrite, so a bad anaphora resolution cannot erase the real query.
@@ -144,9 +200,17 @@ func (r *retriever) search(ctx context.Context, query string, k int, history []T
 			hits = fuseRRF([][]index.Hit{hits, original}, []float64{0.7, 0.3}, r.cfg.RRFK)
 		}
 	}
+	if translatedFrom != "" {
+		if original, oerr := rawSearch(ctx, q); oerr == nil && len(original) > 0 {
+			hits = fuseRRF([][]index.Hit{hits, original}, []float64{0.7, 0.3}, r.cfg.RRFK)
+		}
+	}
 
 	if r.cfg.RerankEnabled {
-		if reranked, rerankErr := rerankHits(ctx, q, hits, r.cfg, r.complete); rerankErr == nil && reranked != nil {
+		// Rerank in the same language as the evidence search. With a
+		// translated query, reranking on the original language reintroduces
+		// the query-language bias translation was meant to remove.
+		if reranked, rerankErr := rerankHitsWithEmbedder(ctx, searchQ, hits, r.cfg, r.complete, r.embedder); rerankErr == nil && reranked != nil {
 			hits = reranked
 		}
 	}
