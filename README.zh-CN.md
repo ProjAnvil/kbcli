@@ -88,7 +88,7 @@ make install    # go install ./cmd/kbcli
 解压后从解压目录运行二进制（请将示例名称换成你的版本与平台）：
 
 ```sh
-tar -xzf kbcli-full-v0.3.0-darwin-arm64.tar.gz   # Windows：unzip kbcli-full-v0.3.0-windows-amd64.zip
+tar -xzf kbcli-full-v0.4.1-darwin-arm64.tar.gz   # Windows：unzip kbcli-full-v0.4.1-windows-amd64.zip
 ./kbcli
 ```
 
@@ -129,7 +129,7 @@ sha256sum -c checksums.txt --ignore-missing
 使用 `go install` 直接安装已发布的版本：
 
 ```sh
-go install github.com/ProjAnvil/kbcli/cmd/kbcli@v0.3.0
+go install github.com/ProjAnvil/kbcli/cmd/kbcli@v0.4.1
 # 或
 go install github.com/ProjAnvil/kbcli/cmd/kbcli@latest
 ```

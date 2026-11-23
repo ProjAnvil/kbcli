@@ -88,7 +88,7 @@ Each GitHub release publishes two distribution tiers per platform. Asset names c
 Extract an archive and run the binary from the extracted directory (replace the example name with your version and platform):
 
 ```sh
-tar -xzf kbcli-full-v0.3.0-darwin-arm64.tar.gz   # Windows: unzip kbcli-full-v0.3.0-windows-amd64.zip
+tar -xzf kbcli-full-v0.4.1-darwin-arm64.tar.gz   # Windows: unzip kbcli-full-v0.4.1-windows-amd64.zip
 ./kbcli
 ```
 
@@ -129,7 +129,7 @@ sha256sum -c checksums.txt --ignore-missing
 Install a released version directly with `go install`:
 
 ```sh
-go install github.com/ProjAnvil/kbcli/cmd/kbcli@v0.3.0
+go install github.com/ProjAnvil/kbcli/cmd/kbcli@v0.4.1
 # or
 go install github.com/ProjAnvil/kbcli/cmd/kbcli@latest
 ```
