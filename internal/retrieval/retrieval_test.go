@@ -342,6 +342,9 @@ func TestMinScoreRunsAfterRerankNormalization(t *testing.T) {
 	fake := &fakeAikitCE{scores: []float32{0.9, -5, 0.5}}
 	installFakeAikit(t, fake, nil)
 	cfg := config.Default()
+	// Aikit reranking is a manual combination; the managed lite tier would
+	// force it back off during Normalize.
+	cfg.Profile = config.ProfileCustom
 	cfg.RerankEnabled = true
 	cfg.RerankType = config.RerankAikit
 	cfg.RerankModelPath = "/models/cross-encoder"

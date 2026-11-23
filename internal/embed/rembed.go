@@ -43,24 +43,85 @@ type rembedEmbedder struct {
 	maxTokens int
 }
 
+// executableDir returns the directory holding the running binary. It is a
+// variable so tests can point at a synthetic offline archive.
+var executableDir = func() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return filepath.Dir(exe)
+}
+
+// bundledRembedCache locates a rembed cache shipped next to the executable.
+// Offline archives place weights at model/rembed/<org>--<name>/, the exact
+// layout hub.Ensure uses below $REMBED_CACHE. Pointing REMBED_CACHE at that
+// root makes every file look already present, so pro indexing and querying
+// need no network access. Only a directory containing both config.json and
+// model.safetensors is trusted; a partial bundle falls through to the Hub.
+func bundledRembedCache(ref string) string {
+	root := executableDir()
+	if root == "" {
+		return ""
+	}
+	name := strings.TrimPrefix(ref, "hf:")
+	if filepath.IsAbs(name) || !strings.Contains(name, "/") || strings.Contains(name, "..") {
+		return ""
+	}
+	leaf := strings.ReplaceAll(name, "/", "--")
+	if leaf == "" || strings.ContainsAny(leaf, `\/:`) {
+		return ""
+	}
+	dir := filepath.Join(root, "model", "rembed", leaf)
+	for _, f := range []string{"config.json", "model.safetensors"} {
+		fi, err := os.Stat(filepath.Join(dir, f))
+		if err != nil || !fi.Mode().IsRegular() {
+			return ""
+		}
+	}
+	return filepath.Join(root, "model", "rembed")
+}
+
+// configureRembedCache picks the weight source before rembed.Load. Priority:
+// an explicitly configured REMBED_CACHE, a bundled offline archive next to the
+// executable, then the user cache directory. HF_HOME alone only affects the
+// auth token, so it does not suppress the user cache default.
+func configureRembedCache(ref string) error {
+	if os.Getenv("REMBED_CACHE") != "" {
+		return nil
+	}
+	if bundled := bundledRembedCache(ref); bundled != "" {
+		if err := os.Setenv("REMBED_CACHE", bundled); err != nil {
+			return fmt.Errorf("embed: set REMBED_CACHE for bundled model: %w", err)
+		}
+		return nil
+	}
+	if os.Getenv("HF_HOME") != "" {
+		return nil
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return fmt.Errorf("embed: resolve user cache dir for rembed: %w", err)
+	}
+	if err := os.Setenv("REMBED_CACHE", filepath.Join(cache, "rembed")); err != nil {
+		return fmt.Errorf("embed: set REMBED_CACHE: %w", err)
+	}
+	return nil
+}
+
 // newRembed loads the neural model identified by ref. Nothing is downloaded at
 // package init; rembed.Load may fetch weights from the Hugging Face Hub on the
 // first explicit New(rembed, ...) call.
 //
-// Cache layout: when neither REMBED_CACHE nor HF_HOME is set, REMBED_CACHE is
-// set to <user cache dir>/rembed before Load so downloaded weights are reused
-// across runs. This mirrors rembed's own default but is set explicitly via the
-// environment so the location is predictable for operators. If either variable
-// is already configured, it is left untouched.
+// Cache layout: a full offline release ships the model under model/rembed/
+// beside the binary and is preferred automatically. Otherwise, when neither
+// REMBED_CACHE nor HF_HOME is set, REMBED_CACHE is set to
+// <user cache dir>/rembed so downloaded weights are reused across runs. This
+// mirrors rembed's own default but is set explicitly via the environment so
+// the location is predictable for operators.
 func newRembed(ref string) (*rembedEmbedder, error) {
-	if os.Getenv("REMBED_CACHE") == "" && os.Getenv("HF_HOME") == "" {
-		cache, err := os.UserCacheDir()
-		if err != nil {
-			return nil, fmt.Errorf("embed: resolve user cache dir for rembed: %w", err)
-		}
-		if err := os.Setenv("REMBED_CACHE", filepath.Join(cache, "rembed")); err != nil {
-			return nil, fmt.Errorf("embed: set REMBED_CACHE: %w", err)
-		}
+	if err := configureRembedCache(ref); err != nil {
+		return nil, err
 	}
 
 	// Weight-only int8 cuts weight traffic about 4x with cosine >= 0.999

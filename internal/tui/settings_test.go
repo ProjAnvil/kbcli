@@ -24,12 +24,18 @@ type settingsCapture struct {
 
 // settingsOpts builds Options with stub Load/Save/OnCommand. The global and
 // draft intentionally differ on top_k so tests can observe override clears and
-// snapshots. config.Default() needs no disk, so no HOME/TempDir setup is used.
+// snapshots. They use the custom tier because these interaction tests exercise
+// manual toggles (rerank_enabled, retrieval_method) that a managed tier would
+// force back; config.Default() needs no disk, so no HOME/TempDir setup is used.
 func settingsOpts() (Options, *settingsCapture) {
 	cap := &settingsCapture{}
 	global := config.Default()
+	global.Profile = config.ProfileCustom
+	global.RerankEnabled = true
 	global.TopK = 3
 	draft := config.Default()
+	draft.Profile = config.ProfileCustom
+	draft.RerankEnabled = true
 	draft.TopK = 20
 
 	opts := baseOpts()
@@ -585,6 +591,19 @@ func TestSettingsSidebarGroups(t *testing.T) {
 	}
 	if fields[0].Key != "profile" {
 		t.Fatalf("first field = %q, want profile", fields[0].Key)
+	}
+	want := []string{config.ProfileLite, config.ProfilePro, config.ProfileCustom}
+	if got := byKey["profile"].Options; len(got) != len(want) {
+		t.Fatalf("profile options = %v, want %v", got, want)
+	} else {
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("profile options = %v, want %v", got, want)
+			}
+		}
+	}
+	if config.Default().Profile != config.ProfileLite {
+		t.Fatal("lite must be the out-of-the-box tier")
 	}
 }
 

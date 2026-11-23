@@ -323,8 +323,11 @@ func TestPartialFileAppliesDefaults(t *testing.T) {
 
 func TestAikitRerankConfig(t *testing.T) {
 	d := Default()
-	if !d.RerankEnabled {
-		t.Fatal("default rerank_enabled must be true")
+	// lite is the default tier and downloads no model, so the aikit reranker
+	// is dormant. The aikit fields stay populated so switching to custom has
+	// a usable starting point.
+	if d.RerankEnabled {
+		t.Fatal("lite default must not enable the model-dependent aikit reranker")
 	}
 	if d.RerankType != RerankAikit {
 		t.Fatalf("default rerank_type = %q, want %q", d.RerankType, RerankAikit)

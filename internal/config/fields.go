@@ -51,7 +51,7 @@ const (
 )
 
 var fieldCatalog = []Field{
-	{Key: "profile", Label: "Profile", Group: groupModels, Kind: FieldEnum, Options: []string{ProfileLocal, ProfileMultilingual, ProfileCustom}, Help: "local: hash + no rerank. multilingual: rembed + local MaxSim. custom: manual."},
+	{Key: "profile", Label: "Profile", Group: groupModels, Kind: FieldEnum, Options: []string{ProfileLite, ProfilePro, ProfileCustom}, Help: "lite: zero downloads, hash embedder, no rerank (default). pro: multilingual neural embeddings + hybrid + token-level MaxSim rerank. custom: manual."},
 	{Key: "embedder", Label: "Embedder", Group: groupModels, Kind: FieldEnum, Options: []string{ProviderLocal, ProviderRembed}, IndexAffect: true, Help: "Changing this requires a re-index."},
 	{Key: "embed_model", Label: "Embed model", Group: groupModels, Kind: FieldString, IndexAffect: true, Help: "Neural model reference. Changing this requires a re-index."},
 	{Key: "rerank_enabled", Label: "Rerank", Group: groupModels, Kind: FieldBool, Help: "Porto: enable post-retrieval reranking."},
@@ -272,6 +272,11 @@ func (c *Config) SetField(key, value string) error {
 		return fmt.Errorf("config: unknown key %q", key)
 	}
 	var err error
+	if key == "profile" {
+		// Accept the v0.4.0 names so existing scripts keep working. The
+		// catalog still lists only the three current tiers in the TUI.
+		value = canonicalProfile(value)
+	}
 	switch f.Kind {
 	case FieldString, FieldEnum:
 		if f.Kind == FieldEnum {

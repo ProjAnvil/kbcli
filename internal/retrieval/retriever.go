@@ -156,8 +156,8 @@ func (r *retriever) search(ctx context.Context, query string, k int, history []T
 	translatedFrom := ""
 	translatedTo := ""
 	// quick_rag skips condense and query transforms, but query translation is
-	// language alignment, not expansion. It must still run in multilingual
-	// profiles or simple definitional questions silently fail across languages.
+	// language alignment, not expansion. It must still run in cross-language
+	// setups or simple definitional questions silently fail across languages.
 	if r.cfg.QueryTranslation != config.QueryTranslationOff {
 		from := textLanguage(q)
 		to := r.corpusLanguage()

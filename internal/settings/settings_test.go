@@ -193,6 +193,10 @@ func TestResolveWorkspaceModeAppliesSparseOverrides(t *testing.T) {
 		t.Fatalf("Set: %v", err)
 	}
 	global := config.Default()
+	// Sparse overrides exercise a manual configuration; the managed lite
+	// tier would force rerank_enabled back off during Normalize.
+	global.Profile = config.ProfileCustom
+	global.RerankEnabled = true
 	beforeChunkSize := global.ChunkSize
 	resolved, err := s.Resolve(global, root)
 	if err != nil {
@@ -253,6 +257,7 @@ func TestApplyInvalidEnumError(t *testing.T) {
 
 func TestApplyBoolAndJSONNumber(t *testing.T) {
 	cfg := config.Default()
+	cfg.Profile = config.ProfileCustom
 	overrides := map[string]any{
 		"rerank_enabled":       true,
 		"hybrid_vector_weight": json.Number("0.25"),

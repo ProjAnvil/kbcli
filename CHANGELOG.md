@@ -7,7 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No unreleased changes yet.
+A product-tier rename and an offline packaging correction. Runtime profiles
+become capability tiers (`lite` / `pro` / `custom`), `lite` becomes the default
+for fresh installs, and the full offline archive finally ships the model the
+full-feature tier actually needs.
+
+### Added
+
+- **Offline `pro` weights in the full archive.** Release archives now bundle
+  `intfloat/multilingual-e5-small` (revision
+  `614241f622f53c4eeff9890bdc4f31cfecc418b3`) under
+  `model/rembed/intfloat--multilingual-e5-small/`, plus the legacy aikit
+  cross-encoder. kbcli auto-detects the bundled rembed cache next to the
+  executable and points `REMBED_CACHE` at it, so `pro` indexing and querying
+  work with zero network access. Both model sets are pinned and verified
+  against `assets/model.sha256` during the release build.
+- **Profile aliases and migration.** `local` and `multilingual` remain
+  accepted aliases for `lite` and `pro` in config files, workspace overrides
+  and `kbcli config set`, and are rewritten to the canonical names on save.
+  A config file with no `profile` key is pinned to `custom` on load so an
+  existing installation keeps its previous rerank settings.
+- **Tests** for tier enforcement, alias canonicalization, legacy-config
+  migration, offline bundle detection, incomplete/unsafe bundle rejection and
+  the bundled model's cache configuration.
+
+### Changed
+
+- **Profiles are product tiers.** `profile` now accepts `lite`, `pro` and
+  `custom`. `lite` replaces `local` and `pro` replaces `multilingual`. The
+  names describe capability rather than implementation: `pro` also improves
+  same-language conceptual recall, and it is deliberately not called `full`
+  because `full` is the name of the offline release archive.
+- **`lite` is the default for fresh installs.** It downloads nothing and
+  starts with reranking disabled. `pro` still forces `rembed`, hybrid
+  retrieval, a wider candidate pool and token-level MaxSim reranking;
+  `custom` still keeps manual combinations.
+- **Bilingual README guidance.** Both READMEs now document the tier names,
+  the default, the upgrade path, the offline archive layout and the corrected
+  settings catalog counts (52 fields in 8 groups).
+- **Release workflow.** The model download step fetches both model sets in
+  one pinned, checksum-verified step and stages them into every full archive.
+
+### Fixed
+
+- **The full archive shipped the wrong model.** It previously contained only
+  the English-only `cross-encoder/ms-marco-MiniLM-L-6-v2` aikit reranker,
+  which no productized tier uses by default, and omitted the multilingual
+  embedding model that `pro` requires. Air-gapped `pro` installs were
+  therefore impossible.
+- **Stale README statements.** The settings catalog counts and the
+  "reranking is on by default" claim had not been updated for the settings
+  redesign and the new default tier.
+
+### Upgrade notes
+
+1. **Fresh installs start on `lite`.** No config change is needed; reranking
+   is off and no model is downloaded. Run `kbcli config set profile pro` and
+   `kbcli reindex` to switch to the full-feature tier.
+2. **Existing configs are preserved.** A `config.yaml` without a `profile`
+   key loads as `custom`. A config with `profile: local` or
+   `profile: multilingual` resolves to `lite` or `pro` automatically. The
+   canonical name is written on the next save.
+3. **Switching tiers changes the embedding domain.** Moving between `lite`
+   and `pro` requires one `kbcli reindex`; query-time knobs do not.
+4. **Offline users should re-download the full archive.** Older full
+   archives do not contain the `pro` weights. Alternatively set
+   `REMBED_CACHE` to a directory containing
+   `intfloat--multilingual-e5-small/`.
+
+### Known limitations
+
+- `pro` weights are ~450 MB, so a full archive is substantially larger than
+  the normal binary. The same weights are duplicated in each per-platform
+  archive.
+- `custom` + `aikit` still downloads the English-only cross-encoder on first
+  use unless the full archive is used; it is not the recommended tier for
+  multilingual corpora.
+- `embed.Dim` remains fixed at 384, so 768/1024-dimension models are unusable.
 
 ## [0.4.0] - 2026-11-24
 

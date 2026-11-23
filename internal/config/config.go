@@ -87,10 +87,18 @@ const (
 	// existing .kbvec built with an older chunker is reported stale.
 	ChunkerVersion = "per-ext-v1"
 
-	// Retrieval profiles are supported combinations of embedder and reranker.
-	ProfileLocal        = "local"
-	ProfileMultilingual = "multilingual"
-	ProfileCustom       = "custom"
+	// Retrieval profiles are product tiers: supported combinations of
+	// embedder, query translation and reranker. Tier names describe what a
+	// user gets, not which library implements it.
+	ProfileLite   = "lite"
+	ProfilePro    = "pro"
+	ProfileCustom = "custom"
+
+	// Legacy v0.4.0 profile names. They are accepted on load, from workspace
+	// overrides and from `kbcli config set`, then normalized to the tier
+	// names, so an existing config.yaml keeps working without an edit.
+	profileLegacyLocal        = "local"
+	profileLegacyMultilingual = "multilingual"
 )
 
 // Config holds every user-tunable knob. Zero values are replaced by defaults
@@ -142,8 +150,9 @@ type Config struct {
 	ContextMaxChunkChars int     `yaml:"context_max_chunk_chars" json:"context_max_chunk_chars"`
 
 	// Retrieval profile selects a supported embedder/reranker combination.
-	// custom keeps manual control. The other profiles force incompatible
-	// switches off and record why in PolicyNotes.
+	// lite is the default: no model download and no reranking. pro enables
+	// the full neural stack. custom keeps manual control. The other profiles
+	// force incompatible switches off and record why in PolicyNotes.
 	Profile string `yaml:"profile" json:"profile"`
 
 	// Rerank settings. Ported from Porto's rerankers.py.
@@ -201,7 +210,8 @@ type PolicyNote struct {
 // Structured formats use SectionSize (1000) so one chunk never mixes several
 // headings or topics. CandidateK widens the pre-rerank pool from TopK to 40.
 // Hybrid retrieval is the default: it fuses dense vectors with BM25 before
-// reranking so exact identifiers and Chinese terms are not lost.
+// reranking so exact identifiers and Chinese terms are not lost. The default
+// tier is lite, which needs no model download, so reranking starts disabled.
 // kbcli counts Go runes, the Unicode code-point analogue of Python len().
 func Default() *Config {
 	return &Config{
@@ -210,7 +220,7 @@ func Default() *Config {
 		Model:                    "gpt-4o-mini",
 		Embedder:                 ProviderLocal,
 		Agent:                    AgentReact,
-		Profile:                  ProfileCustom,
+		Profile:                  ProfileLite,
 		IndexFileName:            DefaultIndexFileName,
 		TimeoutSeconds:           120,
 		MaxIterations:            50,
@@ -231,7 +241,7 @@ func Default() *Config {
 		ContextExpand:            0,
 		ContextCharBudget:        16000,
 		ContextMaxChunkChars:     1600,
-		RerankEnabled:            true,
+		RerankEnabled:            false,
 		RerankType:               RerankAikit,
 		RerankModel:              DefaultRerankModel,
 		RerankTopN:               5,
@@ -264,39 +274,53 @@ func (c *Config) Clone() *Config {
 	return &out
 }
 
+// canonicalProfile maps the v0.4.0 profile names to product tier names and
+// supplies the default for an unset value. Accepting aliases in one place
+// means a config.yaml, a workspace override or a `kbcli config set` call
+// written before the rename still resolves to the same behaviour.
+func canonicalProfile(name string) string {
+	norm := strings.ToLower(strings.TrimSpace(name))
+	switch norm {
+	case "", profileLegacyLocal:
+		return ProfileLite
+	case profileLegacyMultilingual:
+		return ProfilePro
+	default:
+		return norm
+	}
+}
+
 // ApplyProfile enforces the selected retrieval profile. It records every
 // forced change so the TUI can show why a switch was disabled. It is idempotent.
 func (c *Config) ApplyProfile() []PolicyNote {
 	c.PolicyNotes = nil
-	if c.Profile == "" {
-		c.Profile = ProfileLocal
-	}
+	c.Profile = canonicalProfile(c.Profile)
 	switch c.Profile {
-	case ProfileLocal:
+	case ProfileLite:
 		c.force("embedder", c.Embedder, ProviderLocal,
-			"local profile uses the dependency-free hash embedder")
+			"lite profile uses the dependency-free hash embedder and downloads nothing")
 		c.Embedder = ProviderLocal
 		c.force("rerank_enabled", boolValue(c.RerankEnabled), "off",
-			"local profile has no multilingual semantic reranker")
+			"lite profile has no model, so neural reranking is unavailable")
 		c.RerankEnabled = false
 		c.force("query_translation", c.QueryTranslation, QueryTranslationAuto,
-			"local profile uses query translation for lexical cross-language recall")
+			"lite profile uses query translation for lexical cross-language recall")
 		c.QueryTranslation = QueryTranslationAuto
-	case ProfileMultilingual:
+	case ProfilePro:
 		c.force("embedder", c.Embedder, ProviderRembed,
-			"multilingual profile needs in-process multilingual embeddings")
+			"pro profile needs in-process multilingual embeddings")
 		c.Embedder = ProviderRembed
 		c.force("rerank_type", c.RerankType, RerankLocalMaxSim,
-			"multilingual profile reranks with the same tokenizer-level model")
+			"pro profile reranks with the same tokenizer-level model")
 		c.RerankType = RerankLocalMaxSim
 		c.force("rerank_enabled", boolValue(c.RerankEnabled), "on",
-			"multilingual profile keeps local token-level reranking")
+			"pro profile keeps local token-level reranking")
 		c.RerankEnabled = true
 		c.force("query_translation", c.QueryTranslation, QueryTranslationAuto,
-			"multilingual profile translates queries for the lexical lane")
+			"pro profile translates queries for the lexical lane")
 		c.QueryTranslation = QueryTranslationAuto
 		c.force("retrieval_method", c.RetrievalMethod, RetrievalHybrid,
-			"multilingual profile needs dense recall plus literal BM25")
+			"pro profile needs dense recall plus literal BM25")
 		c.RetrievalMethod = RetrievalHybrid
 		if c.CandidateK < 50 {
 			c.force("candidate_k", strconv.Itoa(c.CandidateK), "50",
@@ -305,7 +329,7 @@ func (c *Config) ApplyProfile() []PolicyNote {
 		}
 		if c.BM25TopK < 50 {
 			c.force("bm25_top_k", strconv.Itoa(c.BM25TopK), "50",
-				"multilingual profile needs a wider lexical pool")
+				"pro profile needs a wider lexical pool")
 			c.BM25TopK = 50
 		}
 	case ProfileCustom:
@@ -486,10 +510,26 @@ func Load() (*Config, error) {
 	}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
+		c.ApplyProfile()
 		return c, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("config: read %s: %w", path, err)
+	}
+	// A config written before the product-tier rename has no profile key.
+	// Pin it to custom and restore the pre-profile field defaults BEFORE
+	// unmarshalling so an existing installation never changes behaviour just
+	// because the default tier for fresh installs is now lite.
+	var probe struct {
+		Profile *string `yaml:"profile"`
+	}
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		return nil, fmt.Errorf("config: parse %s: %w", path, err)
+	}
+	if probe.Profile == nil {
+		c.Profile = ProfileCustom
+		c.RerankEnabled = true
+		c.RerankType = RerankAikit
 	}
 	if err := yaml.Unmarshal(data, c); err != nil {
 		return nil, fmt.Errorf("config: parse %s: %w", path, err)
@@ -506,6 +546,10 @@ func Load() (*Config, error) {
 // API key.
 func (c *Config) Save() error {
 	c.applyDefaults()
+	// Persist the canonical tier name so a v0.4.0 alias is migrated on the
+	// first save. Policy enforcement stays with the callers (SetField, Load,
+	// Normalize); Save must not rewrite unrelated fields mid-edit.
+	c.Profile = canonicalProfile(c.Profile)
 	if err := c.Validate(); err != nil {
 		return err
 	}
@@ -551,10 +595,10 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("config: unsupported retrieval_method %q (want vector, bm25 or hybrid)", c.RetrievalMethod)
 	}
-	switch c.Profile {
-	case ProfileLocal, ProfileMultilingual, ProfileCustom:
+	switch canonicalProfile(c.Profile) {
+	case ProfileLite, ProfilePro, ProfileCustom:
 	default:
-		return fmt.Errorf("config: unsupported profile %q (want local, multilingual or custom)", c.Profile)
+		return fmt.Errorf("config: unsupported profile %q (want lite, pro or custom)", c.Profile)
 	}
 	switch c.RerankType {
 	case RerankCrossEncoder, RerankLLM, RerankAikit, RerankLocalMaxSim:

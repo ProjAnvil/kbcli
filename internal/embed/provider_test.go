@@ -140,3 +140,78 @@ func TestNewRembedRespectsExistingCache(t *testing.T) {
 		t.Errorf("REMBED_CACHE = %q, want %q (existing value must be preserved)", got, "/custom/cache")
 	}
 }
+
+// A full offline archive ships the pro-tier weights in rembed cache layout
+// beside the binary. configureRembedCache must prefer it over the Hub.
+func TestConfigureRembedCachePrefersOfflineBundle(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "model", "rembed", "intfloat--multilingual-e5-small")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"config.json", "model.safetensors"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	orig := executableDir
+	executableDir = func() string { return root }
+	t.Cleanup(func() { executableDir = orig })
+	t.Setenv("REMBED_CACHE", "")
+	t.Setenv("HF_HOME", "")
+
+	if err := configureRembedCache(DefaultRembedRef); err != nil {
+		t.Fatalf("configureRembedCache: %v", err)
+	}
+	want := filepath.Join(root, "model", "rembed")
+	if got := os.Getenv("REMBED_CACHE"); got != want {
+		t.Fatalf("REMBED_CACHE = %q, want %q", got, want)
+	}
+}
+
+// A partial or unrelated bundle must not be trusted, and an explicit cache
+// wins over a bundle.
+func TestBundledRembedCacheRejectsIncompleteAndUnsafeRefs(t *testing.T) {
+	root := t.TempDir()
+	orig := executableDir
+	executableDir = func() string { return root }
+	t.Cleanup(func() { executableDir = orig })
+
+	if got := bundledRembedCache(DefaultRembedRef); got != "" {
+		t.Fatalf("empty bundle = %q, want empty", got)
+	}
+	dir := filepath.Join(root, "model", "rembed", "intfloat--multilingual-e5-small")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := bundledRembedCache(DefaultRembedRef); got != "" {
+		t.Fatalf("config-only bundle = %q, want empty", got)
+	}
+	for _, ref := range []string{"/absolute/model", "../escape/model", "no-slash", "org/../name"} {
+		if got := bundledRembedCache(ref); got != "" {
+			t.Errorf("bundledRembedCache(%q) = %q, want empty", ref, got)
+		}
+	}
+
+	t.Setenv("REMBED_CACHE", "/explicit/cache")
+	if err := configureRembedCache(DefaultRembedRef); err != nil {
+		t.Fatalf("configureRembedCache: %v", err)
+	}
+	if got := os.Getenv("REMBED_CACHE"); got != "/explicit/cache" {
+		t.Fatalf("explicit cache overwritten: %q", got)
+	}
+}
+
+// The default neural ref must be one rembed actually supports. The offline
+// archive and the documented pro tier both depend on this exact model.
+func TestDefaultRembedRefIsSupported(t *testing.T) {
+	if DefaultRembedRef != "intfloat/multilingual-e5-small" {
+		t.Fatalf("DefaultRembedRef = %q, want intfloat/multilingual-e5-small", DefaultRembedRef)
+	}
+	if !strings.Contains(DefaultRembedRef, "/") || filepath.IsAbs(DefaultRembedRef) {
+		t.Fatalf("DefaultRembedRef %q is not a Hub model id", DefaultRembedRef)
+	}
+}

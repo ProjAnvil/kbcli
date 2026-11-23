@@ -8,15 +8,15 @@ This document is also available in Simplified Chinese: [README.zh-CN.md](README.
 
 Chat with any local document directory from a single ~26–30 MB Go binary — no server, no vector database, no cloud account, no daemon. Drop the binary on your `PATH`, run `kbcli`, and the TUI is already there: no config file to write by hand, no port to open, no web UI to host.
 
-`kbcli` turns one directory into one portable `.kbvec` vector file and opens a four-view terminal UI: a two-pane chat, a settings screen, an index confirmation dialog, and a first-run API key wizard. It is offline-first out of the box: the default embedder is a zero-dependency in-process hashing model, and when the chat backend is unreachable the answer falls back to a deterministic extractive answer with `[n]` citations. Indexing is always an explicit command; startup never scans or builds anything.
+`kbcli` turns one directory into one portable `.kbvec` vector file and opens a four-view terminal UI: a two-pane chat, a settings screen, an index confirmation dialog, and a first-run API key wizard. It is offline-first out of the box: kbcli starts in `lite` mode with a zero-dependency in-process hashing embedder, and when the chat backend is unreachable the answer falls back to a deterministic extractive answer with `[n]` citations. Indexing is always an explicit command; startup never scans or builds anything.
 
 ## Lightweight by design
 
 - **One static binary, 26–30 MB.** Built with `CGO_ENABLED=0` and `-s -w`. The v0.3.0 normal tier is 26.3 MB (linux/arm64) to 30.3 MB (darwin/amd64). No runtime, no Python, no cgo, no container, no installer.
-- **The TUI is the whole product.** `kbcli` opens a two-pane chat with ranked evidence, `:settings` for all 49 settings, `:reindex`, multi-window tabs and a first-run setup wizard. Nothing else needs to be running. No browser, no localhost port, no separate front end.
+- **The TUI is the whole product.** `kbcli` opens a two-pane chat with ranked evidence, `:settings` for all 52 settings, `:reindex`, multi-window tabs and a first-run setup wizard. Nothing else needs to be running. No browser, no localhost port, no separate front end.
 - **Two commands to a working answer.** `kbcli index ./docs` then `kbcli`. Indexing is always explicit; startup never scans, never walks parent directories and never builds anything behind your back.
 - **One `.kbvec` file per directory.** Copy the folder and the index travels with it. No database to provision, migrate, back up or keep alive.
-- **No downloads to get started.** The default embedder is a zero-dependency in-process hashing model with no weights. The local cross-encoder reranker is fetched once into `~/.kbcli/model` (shown in the TUI boot screen) or shipped inside the `full` archive (~92 MB) for air-gapped machines.
+- **No downloads to get started.** kbcli starts in `lite` mode: a zero-dependency in-process hashing embedder with no weights and no reranker. Switching to `pro` downloads the multilingual embedding model once (~450 MB) into the local rembed cache. The `full` offline archive bundles both the `pro` weights and the legacy cross-encoder for air-gapped machines.
 - **No account required to try it.** The first-run API key wizard is skippable with `ctrl+s`. If the chat backend is unreachable, answers degrade to deterministic extractive evidence with `[n]` citations instead of failing.
 - **No YAML editing.** Every setting lives in the in-TUI `:settings` screen, with sparse per-workspace overrides. Works over SSH, in a tmux pane, and on an offline laptop.
 
@@ -63,7 +63,7 @@ Schematic of the chat view (not a screenshot):
 - Four full-screen `bubbletea` + `bubbles` + `lipgloss` views with a theme that follows the terminal background (OSC 11, or `COLORFGBG`): a two-pane chat (conversation left, ranked evidence right; `ctrl+]` collapses the evidence pane), a master-detail settings screen (group rail + detail pane), an index confirmation dialog, and the first-run API key wizard.
 - Bilingual English / Simplified Chinese UI and prompts, selected by `language` (`en`|`zh`); English is byte-for-byte the original UI.
 - Per-workspace session memory at `~/.kbcli/sessions/<sha256(root)[:16]>.json` (mode `0600`): 4 fact categories (`user_decision`, `user_preference`, `project_context`, `open_question`), Jaccard dedup, cap eviction, history compaction, injected every round.
-- A settings catalog of exactly 49 fields in 7 groups (Foundation, Ingestion, Retrieval, Rerank, Query Transform, Intent, Session), of which exactly 23 are numeric (`FieldInt` or `FieldFloat`), with sparse per-workspace overrides and an INDEX STALE banner driven by a version-2 build signature.
+- A settings catalog of exactly 52 fields in 8 groups (Profile & Models, LLM, Foundation, Ingestion, Retrieval, Query Transform, Intent, Session), of which exactly 23 are numeric (`FieldInt` or `FieldFloat`), with sparse per-workspace overrides and an INDEX STALE banner driven by a version-2 build signature.
 
 ## Install
 
@@ -78,12 +78,12 @@ No CGO, no Python, no server: the result is a single binary.
 
 ### Prebuilt binaries
 
-Each GitHub release publishes two tiers of archives per platform. Asset names carry the OS and architecture; full-tier names also contain `full`.
+Each GitHub release publishes two distribution tiers per platform. Asset names carry the OS and architecture; full-tier names also contain `full`. `full` here is an **archive tier**, not the runtime `pro` profile — it means "every model bundled for offline use".
 
 | Tier | Asset name | Contents |
 | --- | --- | --- |
-| Normal | `kbcli-<version>-<os>-<arch>` (`kbcli-<version>-windows-amd64.exe`) | Binary only; the rerank model downloads on first run. |
-| Full | `kbcli-full-<version>-<os>-<arch>.tar.gz` (`kbcli-full-<version>-windows-amd64.zip`) | Binary plus `model/ms-marco-MiniLM-L-6-v2/` with all five model files; fully offline. |
+| Normal | `kbcli-<version>-<os>-<arch>` (`kbcli-<version>-windows-amd64.exe`) | Binary only. `lite` needs no model; `pro` downloads its weights on first use; `custom`+`aikit` downloads the cross-encoder on first use. |
+| Full | `kbcli-full-<version>-<os>-<arch>.tar.gz` (`kbcli-full-<version>-windows-amd64.zip`) | Binary plus both offline model trees: the `pro` multilingual embedder and the legacy `custom`+`aikit` cross-encoder. Fully offline for every tier. |
 
 Extract an archive and run the binary from the extracted directory (replace the example name with your version and platform):
 
@@ -96,15 +96,28 @@ The full archive contains:
 
 ```
 kbcli                                  # kbcli.exe on Windows
-model/ms-marco-MiniLM-L-6-v2/
-  config.json
-  model.safetensors
-  tokenizer.json
-  tokenizer_config.json
-  vocab.txt
+model/
+  rembed/intfloat--multilingual-e5-small/   # pro tier, rembed cache layout
+    config.json
+    model.safetensors
+    modules.json
+    sentencepiece.bpe.model
+    tokenizer_config.json
+    1_Pooling/config.json
+  ms-marco-MiniLM-L-6-v2/                   # legacy custom+aikit tier
+    config.json
+    model.safetensors
+    tokenizer.json
+    tokenizer_config.json
+    vocab.txt
 ```
 
-On the first run of a full release, kbcli copies `model/` from the executable's directory into `~/.kbcli/model/` — no network access. Each release also uploads `checksums.txt`; verify a download with:
+The two trees are found automatically, with no configuration and no network:
+
+- The `pro` weights sit at `model/rembed/<org>--<name>/`, the exact layout rembed uses below its cache root. kbcli detects that directory next to the executable and points `REMBED_CACHE` at `model/rembed/`, so every weight file is already present and `pro` indexing and querying work air-gapped. Set `REMBED_CACHE` explicitly to override.
+- The cross-encoder files are copied from `model/ms-marco-MiniLM-L-6-v2/` into `~/.kbcli/model/` by the normal boot screen when `custom`+`aikit` is enabled.
+
+The `pro` weights are ~450 MB, so a full archive is substantially larger than a normal binary. Both model sets are pinned to Hugging Face revisions and verified against `assets/model.sha256` during the release build. Each release also uploads `checksums.txt`; verify a download with:
 
 ```sh
 sha256sum -c checksums.txt --ignore-missing
@@ -128,7 +141,7 @@ The module path uses the organisation casing `ProjAnvil`. Go module paths are ca
 ## Quickstart
 
 ```sh
-kbcli config set profile multilingual
+kbcli config set profile pro      # optional: lite is the default
 kbcli index ./docs
 cd ./docs && kbcli
 kbcli search "retry policy" --index ./docs/.kbvec
@@ -150,25 +163,29 @@ array for tool consumers.
 
 ### Retrieval profiles
 
-`profile` selects a supported combination of embedder, translation and reranker. The settings screen groups it with the embedding and rerank knobs under `Profile & Models`, and shows the effective stack plus every forced change.
+`profile` picks a product tier: a supported combination of embedder, query translation and reranker. The settings screen groups it with the embedding and rerank knobs under `Profile & Models`, and shows the effective stack plus every forced change.
 
-| Profile | Embedder | Translation | Rerank | Use when |
-| --- | --- | --- | --- | --- |
-| `local` | zero-weight hashing | auto | off | smallest footprint, exact terms, offline-first Chinese-only corpora |
-| `multilingual` | `rembed` / multilingual-e5-small | auto | `local_maxsim` | mixed-language questions, English queries against non-English corpora, conceptual recall |
-| `custom` | manual | manual | manual | reproducing an older setup or testing unsupported combinations |
+| Profile | What you get | Embedder | Translation | Rerank | Downloads |
+| --- | --- | --- | --- | --- | --- |
+| `lite` **(default)** | Zero-setup, offline-first, fastest | zero-weight hashing | auto | off | nothing |
+| `pro` | Best answer quality, cross-language | `rembed` / `intfloat/multilingual-e5-small` | auto | `local_maxsim` | ~450 MB once |
+| `custom` | Manual control | manual | manual | manual | depends on your choices |
 
-Profiles are enforced. Switching to `local` disables reranking; switching to `multilingual` forces `rembed`, hybrid retrieval and token-level MaxSim reranking. Each forced change is reported with a reason in the TUI. `custom` is the default and preserves pre-profile behaviour.
+**Why these names.** `lite` and `pro` describe capability tiers, not implementation details. `pro` is not called `full` because `full` is already the name of the *offline release archive*, because "full" describes nothing about what is included, and because `custom` actually exposes more knobs than `pro`. The old implementation-flavoured name `multilingual` undersold the tier: neural embeddings also improve same-language conceptual recall, so the value is answer quality, of which cross-language is one dimension.
+
+Tiers are enforced. Switching to `lite` disables reranking and forces the hashing embedder, so kbcli starts with no model download at all. Switching to `pro` forces `rembed`, hybrid retrieval, a wider candidate pool and token-level MaxSim reranking from the *same* model (no second reranker is downloaded). Each forced change is reported with a reason in the TUI.
+
+**Upgrading.** `lite` is the default for fresh installs. An existing `config.yaml` that has no `profile` key is pinned to `custom` on load, preserving its previous behaviour instead of silently turning off a configured reranker. The v0.4.0 names `local` and `multilingual` remain accepted aliases for `lite` and `pro` — in config files, workspace overrides and `kbcli config set` — and are rewritten to the canonical names on the next save.
 
 A warm benchmark on a 4.5 MB mixed Chinese/English interview corpus, using the same definition-style query family, showed:
 
-| Query form | `local` | `multilingual` |
+| Query form | `lite` | `pro` |
 | --- | --- | --- |
 | Pure Chinese (`什么是系统设计`) | ~250 ms, fast literal recall | ~1.6 s, stronger conceptual recall |
 | Pure English against Chinese KB (`what is system design`) | ~1.3 s, unstable target | ~4.8 s, stable target |
 | Mixed (`what's 系统设计`) | ~1.6 s, literal-heavy | ~3.0 s, stable target |
 
-Guidance: choose `local` for pure-Chinese corpora where exact identifiers dominate and startup latency matters. Choose `multilingual` for mixed-language users, English queries against Chinese/non-English content, or when answer stability matters more than warm-query latency. Cold start is higher with `multilingual` because the neural weights load once; later queries reuse the cached model. Changing profiles that change `embedder` requires `kbcli reindex`.
+Guidance: stay on `lite` for pure-Chinese corpora where exact identifiers dominate and startup latency matters — it is the default for a reason. Choose `pro` for mixed-language users, English queries against Chinese/non-English content, or when answer stability matters more than warm-query latency. Cold start is higher with `pro` because the neural weights load once; later queries reuse the cached model. The two tiers use incompatible embedding domains, so switching between `lite` and `pro` requires `kbcli reindex` once; query-time settings such as `top_k` and `candidate_k` never invalidate an index.
 
 Inside the TUI, type `:index <dir>` to index a different directory (two-step confirmation).
 
@@ -198,7 +215,7 @@ kbcli settings set top_k 9     # one sparse workspace override
 
 When no `api_key` is configured and setup has not been dismissed, kbcli opens a full-screen wizard before chat. Step through `chat_provider` (left/right toggles, `enter` confirms), a masked `api_key`, `base_url` and `model`; `enter` advances, `esc` goes back, and on the last step `enter` saves. kbcli validates the config, runs a 5-second HTTP probe against `base_url` (any HTTP response counts as reachable), writes `~/.kbcli/config.yaml` with mode `0600`, and rebuilds the agent, retriever and session so the new key takes effect without a restart. A failed probe only adds a warning — the config is still saved. `ctrl+s` (or `s` on the first step) skips the wizard and records `setup_done: true`, keeping kbcli fully offline. You can also avoid the wizard entirely with `kbcli config set api_key sk-...`.
 
-Reranking is **on by default**: `rerank_enabled: true`, `rerank_type: aikit`, and `rerank_model: ms-marco-MiniLM-L-6-v2`. With `rerank_model_path` empty, the model lives in the managed directory `~/.kbcli/model/ms-marco-MiniLM-L-6-v2/`. On the first run of a normal release, kbcli opens a boot screen with an ASCII logo and a byte-level progress bar while it downloads the five model files (~92 MB). Chat stays blocked until the download or copy finishes. Set `rerank_model_path` to an existing local model directory to skip the boot screen. See [Local cross-encoder reranking](#local-cross-encoder-reranking) for details and for the external HTTP and LLM options.
+Reranking is **off in `lite`** (the default) because the tier downloads no model, and **on in `pro`** with `rerank_type: local_maxsim`, which reuses the multilingual embedder's token vectors instead of a second model. The `aikit` cross-encoder remains available under `custom`: set `rerank_enabled: on`, `rerank_type: aikit` and `rerank_model: ms-marco-MiniLM-L-6-v2`. With `rerank_model_path` empty, that model lives in `~/.kbcli/model/ms-marco-MiniLM-L-6-v2/`; on first use kbcli opens a boot screen with an ASCII logo and a byte-level progress bar while it downloads the five files (~92 MB). Chat stays blocked until the download or copy finishes. Set `rerank_model_path` to an existing local model directory to skip the boot screen. See [Local cross-encoder reranking](#local-cross-encoder-reranking) for details and for the external HTTP and LLM options.
 
 `intent_mode` selects the router: `off`, `binary` (`direct` or `rag`), or `adaptive` (`direct`, `quick_rag`, `deep_rag`). The default is `adaptive`. A `direct` message skips retrieval and gets one short answer. A `quick_rag` message searches the original question without condense or query transforms. A `deep_rag` message runs the full pipeline.
 
@@ -223,26 +240,31 @@ A 4000-rune hard split is fine for plain text but merges unrelated sections in s
 
 ### Local cross-encoder reranking
 
-Reranking is **on by default**: `rerank_type: aikit` runs a cross-encoder
-in-process through
+Reranking is **on in `pro`** via `rerank_type: local_maxsim`, which
+reuses token vectors from the active `rembed` model. The `aikit`
+cross-encoder is the legacy `custom` option: `rerank_type: aikit` runs a
+cross-encoder in-process through
 [`github.com/townsendmerino/aikit`](https://github.com/townsendmerino/aikit)
 v1.78.0. It needs no HTTP service, Python, ONNX Runtime, or cgo; the API is
 Experimental, so kbcli pins the dependency version.
 
-**Managed model (default).** With `rerank_model_path` empty, kbcli uses
+**Managed model (aikit only).** With `rerank_model_path` empty, kbcli uses
 `~/.kbcli/model/<rerank_model>` — by default
-`~/.kbcli/model/ms-marco-MiniLM-L-6-v2/`. On the first run of a normal release,
-kbcli checks for five files there; if any is missing it opens a boot screen
-with an ASCII wordmark and a byte-level progress bar while it downloads them
-(~92 MB, Hugging Face revision `233902d25c440f23af6f7d6e94d2946bac0bee0a`).
+`~/.kbcli/model/ms-marco-MiniLM-L-6-v2/`. On the first run with `aikit`
+enabled, kbcli checks for five files there; if any is missing it opens a boot
+screen with an ASCII wordmark and a byte-level progress bar while it downloads
+them (~92 MB, Hugging Face revision `233902d25c440f23af6f7d6e94d2946bac0bee0a`).
 Chat stays blocked until the download or copy finishes. A [full offline release](#prebuilt-binaries) ships the same five
 files, so its first run only copies them into the managed directory — no network.
+The same archive also ships the `pro` multilingual weights under
+`model/rembed/`, which kbcli consumes directly without a copy step.
 
 **External local model.** Set `rerank_model_path` to a directory containing
 `config.json`, `model.safetensors`, and tokenizer files; kbcli treats it as
 externally managed and skips the download:
 
 ```sh
+kbcli config set profile custom     # managed tiers force incompatible switches
 kbcli config set rerank_enabled on
 kbcli config set rerank_type aikit
 kbcli config set rerank_model_path /path/to/ms-marco-MiniLM-L-6-v2
@@ -293,11 +315,11 @@ Switching tabs never stops a running request. Every tab reserves one fixed cell 
 
 ### Settings screen
 
-`:settings` opens a master-detail view: a group rail on the left, a detail pane on the right. The catalog has exactly **49 fields** in **7 groups** — Foundation, Ingestion, Retrieval, Rerank, Query Transform, Intent, Session — and exactly **23** of them are numeric (`FieldInt` or `FieldFloat`). Only fields you mark are written as sparse overrides; everything else keeps its global value. The **INDEX STALE** banner appears at the top when the loaded index was built with different index-affecting settings; press `r` (or `:reindex`) to rebuild in place.
+`:settings` opens a master-detail view: a group rail on the left, a detail pane on the right. The catalog has exactly **52 fields** in **8 groups** — Profile & Models, LLM, Foundation, Ingestion, Retrieval, Query Transform, Intent, Session — and exactly **23** of them are numeric (`FieldInt` or `FieldFloat`). Profile & Models is first so switching tiers shows the effective embedder/rerank stack and every forced change; LLM holds the chat credentials separately. Only fields you mark are written as sparse overrides; everything else keeps its global value. The **INDEX STALE** banner appears at the top when the loaded index was built with different index-affecting settings; press `r` (or `:reindex`) to rebuild in place.
 
 ### Embedding models and reindexing
 
-The default local embedder is a pure-Go hashing model: it downloads nothing and works fully offline. Selecting the `rembed` neural embedder downloads its weights on first use and reuses the local cache afterwards. `rembed.Load` exposes no byte-level progress, so kbcli shows a phase-level spinner (`loading model` → `scanning` → `indexing` → `saving`) instead of a percentage bar. While a reindex or model load runs, a full-screen modal blocks chat input, and a second reindex cannot be started until the current one finishes.
+The `lite` tier uses a pure-Go hashing embedder: it downloads nothing and works fully offline. The `pro` tier uses `rembed` with `intfloat/multilingual-e5-small` (384 dimensions, mean pooling, e5 `query: ` / `passage: ` prefixes, weight-only int8). Weights are downloaded once on first use into `$REMBED_CACHE` — by default `<user cache dir>/rembed` — and reused afterwards; a [full offline archive](#prebuilt-binaries) ships the same weights under `model/rembed/` and is detected automatically. `HF_TOKEN` is honoured for gated or rate-limited Hubs. `rembed.Load` exposes no byte-level progress, so kbcli shows a phase-level spinner (`loading model` → `scanning` → `indexing` → `saving`) instead of a percentage bar. While a reindex or model load runs, a full-screen modal blocks chat input, and a second reindex cannot be started until the current one finishes.
 
 ## How it works
 
